@@ -8,11 +8,11 @@ Pinch right thumb+index+middle to start app switching (holds ⌘).
 Flap your index finger up and down while holding thumb+middle to send Tab.
 Release thumb+middle to select the active application.
 
-Make a tight right fist with all five fingertips in a straight line
-(neighbor distances near zero) and hold it for 10 seconds to enter
-Scrolling. Keep that line, then open the fist until the fingers point
-up at max palm reach to ScrollUp one page. Close to a fist and open
-again to page up again. Drop the open fingers to ScrollDown.
+Make a tight right fist with all five fingertips touching and hold it
+for 10 seconds to enter Scrolling. Then raise the fingers slowly while
+they stay touching: the page scrolls up at the same rate and stops
+when the hand is fully open. Fist again to raise again. Drop the open
+fingers to ScrollDown.
 
 Close the preview or use --no-preview; Ctrl+C to quit.
 """
@@ -31,7 +31,7 @@ import mediapipe as mp
 
 from gestures.app_switcher import AppSwitcher
 from gestures.scrolling import Scrolling
-from mac_keys import async_cmd, async_page_up, async_tap_tab, set_cmd_state, smooth_scroll
+from mac_keys import async_cmd, async_tap_tab, set_cmd_state, smooth_scroll
 
 TRAIL_LENGTH = 24
 MAX_HANDS = 2
@@ -324,22 +324,24 @@ def main() -> None:
 
                         # --- Scrolling: fist arms the mode, then ScrollUp or ScrollDown ---
                         scroll_action = scrolling.update(hand_landmarks, down)
-                        if scroll_action == "up":
-                            async_page_up()
-                            last_scroll_at = time.monotonic()
-                            last_scroll_amount = 1
-                            last_scroll_action = "up"
-                        elif scroll_action == "down":
+                        if scroll_action is not None:
+                            direction, amount = scroll_action
+                            wheel = amount if direction == "up" else -amount
                             threading.Thread(
-                                target=smooth_scroll, args=(-scrolling.scroll_amount,), daemon=True
+                                target=smooth_scroll, args=(wheel,), daemon=True
                             ).start()
                             last_scroll_at = time.monotonic()
-                            last_scroll_amount = scrolling.scroll_amount
-                            last_scroll_action = "down"
+                            last_scroll_amount = amount
+                            last_scroll_action = direction
                         elif scrolling.active:
-                            status_lines.append(
-                                "Scrolling: fist then point up for one page"
-                            )
+                            if scrolling.scroll_up.from_fist:
+                                status_lines.append(
+                                    "ScrollUp: raise touching fingers — page follows"
+                                )
+                            else:
+                                status_lines.append(
+                                    "Scrolling: fist, then raise touching fingers"
+                                )
                         elif scrolling.hold_seconds > 0:
                             status_lines.append(
                                 f"Scrolling: hold lined-up fist {scrolling.hold_seconds:.1f}/{scrolling.confirm_seconds:.0f}s"
@@ -360,10 +362,9 @@ def main() -> None:
             if time.monotonic() - last_cmd_tab_at < 0.8:
                 status_lines.append("Sent Tab")
             if time.monotonic() - last_scroll_at < 1.0:
-                if last_scroll_action == "up":
-                    status_lines.append("Scroll up (1 page)")
-                else:
-                    status_lines.append(f"Scroll down ({abs(last_scroll_amount)} lines)")
+                status_lines.append(
+                    f"Scroll {last_scroll_action} ({abs(last_scroll_amount)} lines)"
+                )
             
             if not status_lines:
                 status_lines = ["No hands in view"]

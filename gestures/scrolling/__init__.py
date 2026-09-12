@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 
 from .pose import (
+    adjacent_distances_zero,
     all_fingers_down,
     fingers_in_line,
     four_finger_width,
@@ -12,7 +13,6 @@ from .pose import (
     four_fingers_open,
     palm_reach,
     palm_size,
-    pointing_up,
 )
 from .scroll_down import ScrollDown
 from .scroll_up import ScrollUp
@@ -31,9 +31,11 @@ class Scrolling:
       2. those tips stay in a line with near-zero neighbor distances
       3. hold that pose for 10 seconds
 
-    Then, still with the fingers in that line:
-      - fist → fingertips at max palm reach, pointing up → ScrollUp (one page)
-      - repeat that fist → expanded cycle to page up again
+    Then ScrollUp (fingers must stay touching the whole time):
+      - start from a fist
+      - as palm-reach slowly grows, the page scrolls up at the same rate
+      - fully open hand → scrolling stops
+      - separating any fingers cancels; fist again to restart
       - pop the four fingers open while dropping them → ScrollDown
     """
 
@@ -71,8 +73,8 @@ class Scrolling:
         self.hold_seconds = 0.0
         self.scroll_up.reset()
 
-    def update(self, hand_landmarks, fingers_down: list[str]) -> str | None:
-        """Return 'up', 'down', or None."""
+    def update(self, hand_landmarks, fingers_down: list[str]) -> tuple[str, int] | None:
+        """Return ('up', lines), ('down', lines), or None."""
         self.last_action = None
         if self.cooldown > 0:
             self.cooldown -= 1
@@ -80,16 +82,16 @@ class Scrolling:
 
         lm = hand_landmarks.landmark
         palm = palm_size(lm)
+        touching = adjacent_distances_zero(lm, palm, self.together)
         in_line = fingers_in_line(lm, palm, self.together, self.line_dev)
-        in_fist = all_fingers_down(fingers_down) and in_line
+        in_fist = all_fingers_down(fingers_down) and touching
         opened = four_fingers_open(fingers_down)
         width = four_finger_width(lm, palm)
         tip_y = four_finger_y(lm)
         reach = palm_reach(lm, palm)
-        raised = pointing_up(lm)
 
         if not self.active:
-            if in_fist:
+            if in_fist and in_line:
                 now = time.monotonic()
                 if self.fist_started_at is None:
                     self.fist_started_at = now
@@ -102,7 +104,7 @@ class Scrolling:
                 if self.hold_seconds >= self.confirm_seconds:
                     self.active = True
                     self.hold_seconds = self.confirm_seconds
-                    self.scroll_up.from_fist = True
+                    self.scroll_up.arm(reach)
             else:
                 self.fist_started_at = None
                 self.hold_seconds = 0.0
@@ -114,15 +116,10 @@ class Scrolling:
             self.fist_width = min(self.fist_width, width)
             self.fist_y = tip_y
 
-        if self.scroll_up.update(
-            in_line=in_line,
-            in_fist=in_fist,
-            reach=reach,
-            pointing_up=raised,
-        ):
+        up_lines = self.scroll_up.update(touching=touching, in_fist=in_fist, reach=reach)
+        if up_lines > 0:
             self.last_action = "up"
-            self.cooldown = self.cooldown_frames
-            return "up"
+            return ("up", up_lines)
 
         if not in_fist:
             width_delta = width - self.fist_width
@@ -130,6 +127,6 @@ class Scrolling:
             if self.scroll_down.triggered(opened, width_delta, travel_y, in_line):
                 self.last_action = "down"
                 self.cooldown = self.cooldown_frames
-                return "down"
+                return ("down", self.scroll_amount)
 
         return None
