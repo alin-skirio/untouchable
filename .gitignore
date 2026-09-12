@@ -1,5 +1,6 @@
 .venv/
 venv/
+.env
 __pycache__/
 *.py[cod]
 .DS_Store
@@ -8,4 +9,9 @@ __pycache__/
 .vscode/
 hand_reference.png
 hand_reference.json
+
+profiles.db
+profiles/
+models/*.onnx
+models/*.onnx.tmp
 

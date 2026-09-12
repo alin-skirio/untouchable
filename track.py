@@ -1,4 +1,4 @@
-"""Live webcam preview with MediaPipe hand landmarks.
+"""Live webcam preview with MediaPipe hand landmarks and face profiles.
 
 Hold one or both hands in view. The trail follows a fingertip on each hand.
 Curl exactly one finger to move that hand's trail onto that fingertip.
@@ -10,16 +10,23 @@ Release thumb+middle to select the active application.
 
 Pop a right fist open (index through pinky) to flick-scroll down.
 
-Hold the pinky up for 3 seconds (fingers touching) to start ScrollUp,
-make a fist, then raise: the page follows and stops when all fingers
-point up at max palm-reach. Fist again to repeat. If the fingers
-separate, it cancels. Point the pinky up to ScrollDown.
+Point only the left pinky up (index, middle, and ring curled) to
+ScrollUp, or only the right pinky up to ScrollDown. Press the thumb
+into the fist to go faster; release it to return to the normal speed.
 
 Point index+middle with ring+pinky curled to move the macOS cursor from the index tip.
 A very fast open-and-close fist that lands on that pointing pose toggles tracking on or off.
 Press S to warp the cursor onto that fingertip. Tap thumb to the curled ring (<0.5s) to
 left-click, or hold to drag; tap the side of the pointing index to right-click.
 ⌘T captures a desk-distance reference; the Desk slider is base sensitivity.
+Point index+middle with ring+pinky curled to move the macOS cursor.
+Curl index+middle to left-drag; add a pointed thumb to right-drag.
+⌘T captures a reference image so cursor travel stays consistent with distance.
+Hold right thumb+ring+pinky down, keep index+middle up and together,
+and swipe up rapidly to scroll down dynamically based on swipe severity.
+
+Face recognition runs on the same camera feed. Press A to add a named
+profile (saved in profiles.db), L to list profiles.
 
 Close the preview or use --no-preview; Ctrl+C to quit.
 """
@@ -29,13 +36,14 @@ from __future__ import annotations
 import argparse
 import math
 import signal
-import time
 import threading
+import time
 from collections import deque
 
 import cv2
 import mediapipe as mp
 
+from faceid import FaceID, NameEntryUI, open_camera
 from gestures.app_switcher import AppSwitcher
 from gestures.cursor import PointerCursor
 from gestures.landmarks import palm_size_px
@@ -81,29 +89,6 @@ DEFAULT_COLOR = (0, 200, 255)
 TRACKBAR_NAME = "Desk 0.25-3.00"
 TRACKBAR_MIN = 25
 TRACKBAR_MAX = 300
-
-
-def open_camera(preferred: int | None = None) -> cv2.VideoCapture:
-    """Tries indices 0, 1, and 2 to handle Continuity Camera or secondary webcams."""
-    indices = (preferred,) if preferred is not None else (0, 1, 2)
-    for idx in indices:
-        cap = cv2.VideoCapture(idx, cv2.CAP_AVFOUNDATION)
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
-        if cap.isOpened():
-            # Test frame grab
-            ok, _ = cap.read()
-            if ok:
-                print(f"Connected to camera at index {idx}.")
-                return cap
-            cap.release()
-
-    raise SystemExit(
-        "Could not open any active camera feed.\n"
-        "1. Ensure no other application (Zoom, FaceTime, Browser) is using the camera.\n"
-        "2. On macOS: System Settings → Privacy & Security → Camera, then allow "
-        "Cursor (or Terminal) and run this script again."
-    )
 
 
 def _pt(landmark) -> tuple[float, float, float]:
@@ -158,6 +143,7 @@ def draw_hud(frame, lines: list[str], sensitivity: float | None = None) -> None:
     cv2.putText(
         frame,
         "Q/Esc quit · S place cursor",
+        "A add face  |  L list  |  Q/Esc quit",
         (28, y),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.5,
@@ -254,6 +240,8 @@ def main() -> None:
         min_detection_confidence=0.75,
         min_tracking_confidence=0.75,
     )
+    face_id = FaceID()
+    name_ui = NameEntryUI()
     cap = open_camera(preferred=args.camera)
     trails: dict[str, deque[tuple[int, int]]] = {
         "Left": deque(maxlen=TRAIL_LENGTH),
@@ -261,13 +249,14 @@ def main() -> None:
     }
     active_finger: dict[str, str] = {}
     pending: dict[str, tuple[str, int]] = {}
-    
+
     switcher = AppSwitcher()
     scroll_up = ScrollUp()
     scroll_down = ScrollDown()
     scroller = SwipeScroller()
     pointer = PointerCursor()
     cmd_t = start_cmd_t_monitor()
+
     last_cmd_tab_at = 0.0
     last_scroll_at = 0.0
     last_scroll_amount = 0
@@ -286,6 +275,11 @@ def main() -> None:
                 window, f"Hand Control — Desk {pointer.base_sensitivity:.2f}x"
             )
 
+    names = face_id.list_names()
+    print(
+        f"Loaded {len(names)} face profile(s) from {face_id.profiles_dir}"
+        + (f": {', '.join(names)}" if names else "")
+    )
     if preview:
         cv2.namedWindow(window, cv2.WINDOW_NORMAL)
         cv2.setWindowTitle(window, f"Hand Control — Desk {pointer.base_sensitivity:.2f}x")
@@ -295,6 +289,11 @@ def main() -> None:
         cv2.setTrackbarMin(TRACKBAR_NAME, window, TRACKBAR_MIN)
         print("Tracking in the background too. Close this window or click away; Ctrl+C or Q to quit.")
         print("S places the cursor on the index tip. ⌘T is the desk reference. Desk slider is base sensitivity.")
+        print("⌘T captures a hand-distance reference. Index+middle up, ring+pinky down moves the cursor.")
+        print(
+            "Same camera for hands + face. "
+            "A = add face profile (type name in the window), L = list, Q/Esc or Ctrl+C to quit."
+        )
     else:
         print("Running without a preview. Hold thumb+middle & tap index to cycle apps. Ctrl+C to quit.")
         print("⌘T captures a desk-distance reference. Index+middle up, ring+pinky down moves the cursor.")
@@ -322,6 +321,10 @@ def main() -> None:
             seen: set[str] = set()
             status_lines: list[str] = []
             saw_right = False
+            saw_left = False
+
+            # Face recognition / enrollment on the shared feed (draws on frame).
+            status_lines.extend(face_id.process(frame, rgb))
 
             if result.multi_hand_landmarks:
                 handedness_list = result.multi_handedness or []
@@ -376,6 +379,17 @@ def main() -> None:
                         f"{label}  {current}  x={tip.x:.2f}  y={tip.y:.2f}{extra}"
                     )
 
+                    if label == "Left":
+                        saw_left = True
+                        up_lines = scroll_up.update(hand_landmarks, down)
+                        if up_lines > 0:
+                            threading.Thread(
+                                target=smooth_scroll, args=(up_lines,), daemon=True
+                            ).start()
+                            last_scroll_at = time.monotonic()
+                            last_scroll_amount = up_lines
+                            last_scroll_action = "up"
+
                     if label == "Right":
                         saw_right = True
                         last_right_palm = palm_px
@@ -400,7 +414,6 @@ def main() -> None:
                             flash_pointer_rim(False)
 
                         if cursor.engaged:
-                            scroll_up.reset()
                             scroll_down.reset()
                             scroller.reset()
                             if pointer.held_button == "left":
@@ -410,7 +423,6 @@ def main() -> None:
                             else:
                                 status_lines.append("Pointer")
                         elif was_pointing:
-                            scroll_up.reset()
                             scroll_down.reset()
                             scroller.reset()
                         else:
@@ -429,35 +441,14 @@ def main() -> None:
                             if switcher.active:
                                 status_lines.append("Right pinch: App Switcher Active (⌘ Held)")
 
-                            up_lines = scroll_up.update(hand_landmarks, down)
-                            down_lines = 0 if up_lines > 0 else scroll_down.update(hand_landmarks, down)
-                            if up_lines > 0:
-                                threading.Thread(
-                                    target=smooth_scroll, args=(up_lines,), daemon=True
-                                ).start()
-                                last_scroll_at = time.monotonic()
-                                last_scroll_amount = up_lines
-                                last_scroll_action = "up"
-                            elif down_lines > 0:
+                            down_lines = scroll_down.update(hand_landmarks, down)
+                            if down_lines > 0:
                                 threading.Thread(
                                     target=smooth_scroll, args=(-down_lines,), daemon=True
                                 ).start()
                                 last_scroll_at = time.monotonic()
                                 last_scroll_amount = down_lines
                                 last_scroll_action = "down"
-                            elif scroll_up.phase == "raising":
-                                scroller.reset()
-                                status_lines.append(
-                                    "ScrollUp: raise touching fingers — page follows"
-                                )
-                            elif scroll_up.phase == "wait_fist":
-                                scroller.reset()
-                                status_lines.append("ScrollUp: make a fist")
-                            elif scroll_up.hold_seconds > 0:
-                                scroller.reset()
-                                status_lines.append(
-                                    f"ScrollUp: hold pinky up {scroll_up.hold_seconds:.1f}/{scroll_up.initiate_seconds:.0f}s"
-                                )
                             else:
                                 scroll_amount = scroller.update(hand_landmarks, down)
                                 if scroll_amount > 0:
@@ -467,6 +458,9 @@ def main() -> None:
                                     last_scroll_at = time.monotonic()
                                     last_scroll_amount = scroll_amount
                                     last_scroll_action = "flick"
+
+            if not saw_left:
+                scroll_up.reset()
 
             if not saw_right:
                 if pointer.engaged or pointer.held_button:
@@ -480,7 +474,6 @@ def main() -> None:
                 if switcher.active:
                     switcher.reset()
                     async_cmd(False)
-                scroll_up.reset()
                 scroll_down.reset()
                 scroller.reset()
 
@@ -521,6 +514,10 @@ def main() -> None:
             status_lines.append(f"Dist {pointer.distance_ratio(last_right_palm):.1f}x")
             if last_ref_msg and time.monotonic() - last_ref_at < 1.5:
                 status_lines.append(last_ref_msg)
+                status_lines.append(f"Scrolled {last_scroll_amount} lines!")
+
+            if not seen and not face_id.enrolling:
+                status_lines.append("No hands in view")
             status_lines.append("Hold Right thumb+middle & tap index = ⌘Tab cycle")
             status_lines.append("S = place on index tip; thumb-to-ring = left; thumb-to-index = right")
             status_lines.append("Tap <0.5s clicks; hold longer to drag until you leave the finger")
@@ -528,15 +525,24 @@ def main() -> None:
 
             if preview:
                 draw_hud(frame, status_lines, sensitivity=pointer.base_sensitivity)
+                draw_hud(frame, status_lines)
+                name_ui.draw(frame)
                 cv2.imshow(window, frame)
                 visible = cv2.getWindowProperty(window, cv2.WND_PROP_VISIBLE)
                 if visible < 1:
                     preview = False
+                    name_ui.close()
                     cv2.destroyAllWindows()
                     print("Preview closed. Tracking still running in the background. Ctrl+C to quit.")
                 else:
                     key = cv2.waitKey(1) & 0xFF
-                    if key in (ord("q"), 27):
+                    if name_ui.active:
+                        result = name_ui.handle_key(key)
+                        if isinstance(result, str):
+                            face_id.begin_enroll(result)
+                        # False = cancelled; None = still typing
+                        continue
+                    if key in (ord("q"),):
                         break
                     if key in (ord("s"), ord("S")):
                         if switcher.active:
@@ -564,11 +570,26 @@ def main() -> None:
                         else:
                             last_ref_msg = "No hand to place cursor"
                             last_ref_at = time.monotonic()
+                    if key == 27:  # Esc
+                        if face_id.enrolling:
+                            face_id.cancel_enroll()
+                        else:
+                            break
+                    elif key in (ord("a"), ord("A")):
+                        if not face_id.enrolling:
+                            name_ui.open()
+                    elif key in (ord("l"), ord("L")):
+                        names = face_id.list_names()
+                        if names:
+                            print("Saved face profiles: " + ", ".join(names))
+                        else:
+                            print("No face profiles yet. Press A to add one.")
     finally:
         release_mouse()
         set_cmd_state(False)
         cmd_t.stop()
         hands.close()
+        face_id.close()
         cap.release()
         cv2.destroyAllWindows()
 
