@@ -13,5 +13,5 @@ hand_reference.json
 profiles.db
 profiles/
 models/*.onnx
-models/*.onnx.tmp
+simplified/
 

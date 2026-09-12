@@ -40,7 +40,9 @@ URL = f"wss://api.x.ai/v1/realtime?model={MODEL}"
 VOICE_INSTRUCTIONS = (
     INSTRUCTIONS
     + "\nOnly call tools if this user turn includes the wake phrase "
-    + '"hey grok". If it does not, do not call tools.'
+    + '"hey grok". If it does not, do not call tools. '
+    + "If they ask to simplify this page or make it easier to read, call simplify_page. "
+    + "If the user says hey grok shut down, do not control the Mac; the listener will exit."
 )
 
 
@@ -53,6 +55,46 @@ def contains_wake(text: str) -> bool:
 def strip_wake(text: str) -> str:
     cleaned = re.sub(r"(?i)hey\s+grok[,.!]?", " ", text)
     return re.sub(r"\s+", " ", cleaned).strip()
+
+
+def _normalize_command(text: str) -> str:
+    cleaned = re.sub(r"[^a-z0-9\s]", " ", text.lower())
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    cleaned = re.sub(r"^(please|now)\s+", "", cleaned)
+    return cleaned
+
+
+def is_simplify_command(text: str) -> bool:
+    """True for 'hey grok, simplify this' and close variants."""
+    if not contains_wake(text):
+        return False
+    rest = _normalize_command(strip_wake(text))
+    needles = (
+        "simplify this",
+        "simplify the page",
+        "simplify this page",
+        "make this easier",
+        "easier to read",
+        "easier to navigate",
+        "simplify",
+    )
+    return any(needle in rest for needle in needles)
+
+
+def is_exit_command(text: str) -> bool:
+    """True for 'hey grok, shut down' — stops this program, not the Mac."""
+    if not contains_wake(text):
+        return False
+    rest = _normalize_command(strip_wake(text))
+    return rest in {
+        "shut down",
+        "shutdown",
+        "shut down the program",
+        "stop listening",
+        "quit",
+        "exit",
+        "stop",
+    }
 
 
 def _api_key() -> str:
@@ -106,7 +148,7 @@ async def run_realtime(key: str) -> None:
         callback=on_audio,
     )
     headers = {"Authorization": f"Bearer {key}"}
-    print('Listening on Grok Voice. Say "hey grok" then a command. Ctrl+C to quit.')
+    print('Listening on Grok Voice. Say "hey grok" then a command. Say "hey grok, shut down" to quit.')
 
     async with _ws_connect(headers) as ws:
         await ws.send(
@@ -124,7 +166,7 @@ async def run_realtime(key: str) -> None:
                                 "transcription": {
                                     "model": "grok-transcribe",
                                     "language_hint": "en",
-                                    "keyterms": ["hey Grok", "Grok"],
+                                    "keyterms": ["hey Grok", "Grok", "shut down", "simplify"],
                                 },
                             },
                             "output": {
@@ -239,6 +281,10 @@ async def run_realtime(key: str) -> None:
                             turn_text = piece
                         mark = "wake" if contains_wake(turn_text) else "no wake"
                         print(f"You ({mark}): {turn_text}")
+                        if is_exit_command(turn_text):
+                            print("Shutting down the voice listener.")
+                            stop.set()
+                            break
 
                 if kind == "response.function_call_arguments.done":
                     await handle_function_call(event)
@@ -329,7 +375,7 @@ def run_stt_fallback(key: str) -> None:
         "Grok Voice realtime is not available on this key. "
         'Falling back to Grok speech-to-text plus tools. Say "hey grok" then a command.'
     )
-    print("Ctrl+C to quit.")
+    print('Say "hey grok, shut down" to quit.')
     while True:
         audio = _record_utterance()
         if audio.size == 0:
@@ -339,6 +385,17 @@ def run_stt_fallback(key: str) -> None:
         print(f"You: {text or '(empty)'}")
         if not contains_wake(text):
             print('Need the wake phrase "hey grok" first.')
+            continue
+        if is_exit_command(text):
+            print("Shutting down the voice listener.")
+            return
+        if is_simplify_command(text):
+            from simplify import simplify_current_page
+
+            command = strip_wake(text) or "Simplify this page."
+            print("Simplifying the current browser page…")
+            result = simplify_current_page(command)
+            print(f"Grok said: {result}")
             continue
         command = strip_wake(text) or text
         reply = run_instruction(command)
