@@ -114,9 +114,9 @@ def pinky_only_up(lm, fingers_down: list[str]) -> bool:
 
 
 def thumb_tucked(lm, fingers_down: list[str]) -> bool:
-    """True when the thumb is pressed in against the fist or palm."""
-    if "thumb" in fingers_down:
-        return True
+    """True when the thumb is folded into the fist, not standing off the palm."""
+    if "thumb" not in fingers_down:
+        return False
     palm = palm_size(lm)
     cx, cy = palm_center(lm)
     reach = math.hypot(lm[THUMB_TIP].x - cx, lm[THUMB_TIP].y - cy) / palm
