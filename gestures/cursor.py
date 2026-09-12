@@ -226,6 +226,24 @@ class PointerCursor:
         self._leave_grace = 0
         self._toggle_cooldown = TOGGLE_COOLDOWN
 
+    def _update_click(
+        self, hand_landmarks, *, allow_press: bool = True
+    ) -> tuple[Optional[str], Optional[str]]:
+        contact = thumb_to_ring_side(hand_landmarks)
+        clicking = contact <= (CLICK_OFF if self._clicking else CLICK_ON)
+        button_down: Optional[str] = None
+        button_up: Optional[str] = None
+        if clicking and not self._clicking:
+            if allow_press:
+                self._clicking = True
+                self.held_button = "left"
+                button_down = "left"
+        elif not clicking and self._clicking:
+            self._clicking = False
+            button_up = self.held_button
+            self.held_button = None
+        return button_down, button_up
+
     def update(self, hand_landmarks, fingers_down: list[str], frame_size) -> CursorUpdate:
         width, height = frame_size
         down = set(fingers_down)
@@ -251,7 +269,8 @@ class PointerCursor:
                 released = self.reset()
                 return CursorUpdate(False, 0.0, 0.0, None, released)
             self._clutch = True
-            return CursorUpdate(True, 0.0, 0.0, None, None)
+            _, button_up = self._update_click(hand_landmarks, allow_press=False)
+            return CursorUpdate(True, 0.0, 0.0, None, button_up)
 
         self._leave_grace = 0
 
@@ -281,18 +300,5 @@ class PointerCursor:
             if math.hypot(dx, dy) < deadzone:
                 dx = dy = 0.0
 
-        contact = thumb_to_ring_side(hand_landmarks)
-        clicking = contact <= (CLICK_OFF if self._clicking else CLICK_ON)
-
-        button_down: Optional[str] = None
-        button_up: Optional[str] = None
-        if clicking and not self._clicking:
-            self._clicking = True
-            self.held_button = "left"
-            button_down = "left"
-        elif not clicking and self._clicking:
-            self._clicking = False
-            button_up = self.held_button
-            self.held_button = None
-
+        button_down, button_up = self._update_click(hand_landmarks)
         return CursorUpdate(True, dx, dy, button_down, button_up)
