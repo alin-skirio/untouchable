@@ -9,9 +9,7 @@ from chrome import AMBER, DIM, GREEN, MUTE, ROSE, TEAL, TEXT, VIOLET
 from mac_keys import display_bounds
 
 CAM_WINDOW = "Hand Control — tracker"
-RAIL_WINDOW = "•"
-TRACKBAR_MIN = 25
-TRACKBAR_MAX = 300
+RAIL_WINDOW = "Hand Control"
 
 FEATURES = (
     ("pointer", "Pointer"),
@@ -40,8 +38,12 @@ class CameraHud:
     def __init__(self) -> None:
         self.enabled = {key: True for key, _label in FEATURES}
         self.preview = True
-        self._cam_hits: list[tuple[tuple[int, int], int, str]] = []
-        self._rail_hits: list[tuple[tuple[int, int], int, str]] = []
+        self.faces_open = False
+        self.faces: list[str] = []
+        self.faces_sel = 0
+        self.confirm_name: str | None = None
+        self._cam_hits: list[tuple[tuple[int, int, int, int], str]] = []
+        self._rail_hits: list[tuple[tuple[int, int, int, int], str]] = []
         self._pending: str | None = None
 
     def on(self, key: str) -> bool:
@@ -111,17 +113,213 @@ class CameraHud:
         cv2.imshow(RAIL_WINDOW, img)
 
 
-def _headline(lines: list[str]) -> str:
-    skip = ("dist ", "⌘t", "no hands")
-    for line in lines:
-        low = line.strip().lower()
-        if not low or any(low.startswith(s) for s in skip):
-            continue
-        return line.strip()[:28]
-    return "Ready"
+def _status_view(lines: list[str]) -> tuple[str, str, str, str]:
+    locked = False
+    face = ""
+    mode = "Ready"
+    meta = ""
+    hint = ""
+    for raw in lines:
+        line = raw.strip()
+        low = line.lower()
+        if line == "Locked":
+            locked = True
+        elif line.startswith("Face: "):
+            face = line[6:]
+        elif low.startswith("dist "):
+            meta = line.split(" ", 1)[-1]
+        elif line.startswith("Pointer ·"):
+            mode = "Click"
+        elif line == "Pointer" or line.startswith("Pointer:"):
+            mode = "Pointer"
+            if line.startswith("Pointer:"):
+                hint = line.removeprefix("Pointer:").strip()
+        elif line == "App switcher":
+            mode = "Switcher"
+        elif low.startswith("tiktok"):
+            mode = "TikTok"
+        elif low.startswith("scroll"):
+            mode = "Scroll"
+        elif low.startswith("flick"):
+            mode = "Flick"
+        elif line == "T pose held":
+            mode = "Hold"
+        elif line == "Sent Tab":
+            mode = "Tab"
+        elif "→" in line or line.startswith(("Reference", "Cursor", "Could not")):
+            hint = line
+        elif line == "No hands in view":
+            hint = hint or "No hands in view"
+    if locked:
+        return "Locked", "Idle", meta, hint or "Look at the camera to unlock"
+    if face and face != "Unknown":
+        return f"Hi, {face}"[:18], mode, meta, hint
+    if face == "Unknown":
+        return "New face", mode, meta, hint or "Open People to save this face"
+    return "Live", mode, meta, hint
 
 
-def _hit(event, x, y, hits, queue) -> None:
+def _status_bar(frame, state: str, mode: str, meta: str) -> None:
+    width = frame.shape[1]
+    x1, y1 = PAD, PAD
+    x2, y2 = width - PAD, PAD + 36
+    _round_rect(frame, x1, y1, x2, y2, 18, GRAPHITE, fill=True)
+    _round_rect(frame, x1, y1, x2, y2, 18, LINE, fill=False)
+    locked = state == "Locked"
+    cv2.circle(frame, (x1 + 16, y1 + 18), 5, ALERT if locked else ICE, -1, cv2.LINE_AA)
+    label = f"{state}   {mode}"
+    if meta:
+        label += f"   {meta}"
+    _text(frame, label, x1 + 30, y1 + 24, 0.48, WHITE)
+
+
+def _hint_bar(frame, hint: str) -> None:
+    hgt, width = frame.shape[:2]
+    text = hint[:56]
+    (tw, _th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)
+    bar_w = min(width - 2 * PAD, tw + 28)
+    x1, y1 = PAD, hgt - PAD - 30
+    _round_rect(frame, x1, y1, x1 + bar_w, y1 + 30, 15, GRAPHITE, fill=True)
+    _round_rect(frame, x1, y1, x1 + bar_w, y1 + 30, 15, LINE, fill=False)
+    _text(frame, text, x1 + 14, y1 + 20, 0.4, MUTED)
+
+
+def _draw_cam_controls(frame, preview: bool, faces_open: bool, hits: list) -> None:
+    width = frame.shape[1]
+    y = PAD + 44
+    labels = [
+        ("Hide camera" if preview else "Show camera", "toggle_preview", False, False),
+        ("Done" if faces_open else "People", "close_faces" if faces_open else "toggle_faces", False, False),
+        ("Quit", "quit", True, False),
+    ]
+    gap = 8
+    total = len(labels) * PILL_CAM + (len(labels) - 1) * gap
+    x = width - PAD - total
+    if x < PAD:
+        x = PAD
+    for label, action, danger, primary in labels:
+        _pill_btn(frame, x, y, PILL_CAM, label, hits, action, danger=danger, primary=primary)
+        x += PILL_CAM + gap
+
+
+def _draw_faces_panel(frame, hud: CameraHud) -> None:
+    h, w = frame.shape[:2]
+    overlay = frame.copy()
+    cv2.rectangle(overlay, (0, 0), (w, h), (0, 0, 0), -1)
+    cv2.addWeighted(overlay, 0.5, frame, 0.5, 0, frame)
+
+    box_w = min(440, w - 40)
+    row_h = 34
+    names = hud.faces
+    list_h = max(row_h, min(8, max(1, len(names))) * row_h)
+    box_h = 108 + list_h + 58
+    x1 = (w - box_w) // 2
+    y1 = max(PAD + 86, (h - box_h) // 2)
+    x2, y2 = x1 + box_w, y1 + box_h
+
+    _round_rect(frame, x1, y1, x2, y2, 18, INK, fill=True)
+    _round_rect(frame, x1, y1, x2, y2, 18, LINE, fill=False)
+    _text(frame, "People", x1 + 22, y1 + 32, 0.62, WHITE)
+    _text(
+        frame,
+        "Choose a saved face to delete, or add someone new.",
+        x1 + 22,
+        y1 + 54,
+        0.38,
+        MUTED,
+    )
+
+    list_y = y1 + 70
+    if not names:
+        _text(frame, "No saved faces yet — tap Add to start.", x1 + 22, list_y + 24, 0.42, MUTED)
+    else:
+        for i, name in enumerate(names):
+            ry1 = list_y + i * row_h
+            ry2 = ry1 + row_h - 6
+            selected = i == hud.faces_sel
+            _round_rect(frame, x1 + 18, ry1, x2 - 18, ry2, 10, SOFT if selected else (24, 22, 20), fill=True)
+            if selected:
+                _round_rect(frame, x1 + 18, ry1, x2 - 18, ry2, 10, ICE, fill=False)
+            _text(frame, name, x1 + 32, ry1 + 20, 0.46, WHITE if selected else MUTED)
+            hud._cam_hits.append(((x1 + 18, ry1, x2 - 18, ry2), f"pick_face:{i}"))
+
+    btn_y = y2 - 46
+    _pill_btn(frame, x1 + 18, btn_y, 108, "Add person", hud._cam_hits, "add_face", primary=True)
+    if hud.confirm_name:
+        _pill_btn(
+            frame,
+            x1 + 134,
+            btn_y,
+            168,
+            f"Delete {hud.confirm_name}?",
+            hud._cam_hits,
+            "confirm_delete",
+            danger=True,
+        )
+        _pill_btn(frame, x1 + 310, btn_y, 92, "Keep", hud._cam_hits, "cancel_delete")
+    else:
+        _pill_btn(frame, x1 + 134, btn_y, 92, "Delete", hud._cam_hits, "ask_delete", danger=True)
+        _pill_btn(frame, x1 + 234, btn_y, 92, "Done", hud._cam_hits, "close_faces")
+
+
+def _pill_btn(
+    img,
+    x: int,
+    y: int,
+    width: int,
+    label: str,
+    hits: list,
+    action: str,
+    *,
+    danger: bool = False,
+    primary: bool = False,
+) -> None:
+    x2, y2 = x + width, y + BTN_H
+    if danger:
+        fill, edge, color = (36, 28, 48), ALERT, (190, 190, 255)
+    elif primary:
+        fill, edge, color = (48, 42, 22), ICE, WHITE
+    else:
+        fill, edge, color = SOFT, LINE, WHITE
+    _round_rect(img, x, y, x2, y2, BTN_H // 2, fill, fill=True)
+    _round_rect(img, x, y, x2, y2, BTN_H // 2, edge, fill=False)
+    shown = label[:18]
+    (tw, th), _ = cv2.getTextSize(shown, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)
+    tx = x + max(8, (width - tw) // 2)
+    ty = y + (BTN_H + th) // 2
+    _text(img, shown, tx, ty, 0.4, color)
+    hits.append(((x, y, x2, y2), action))
+
+
+def _round_rect(img, x1, y1, x2, y2, radius: int, color, *, fill: bool) -> None:
+    x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
+    radius = max(1, min(radius, (x2 - x1) // 2, (y2 - y1) // 2))
+    if fill:
+        cv2.rectangle(img, (x1 + radius, y1), (x2 - radius, y2), color, -1)
+        cv2.rectangle(img, (x1, y1 + radius), (x2, y2 - radius), color, -1)
+        for cx, cy in (
+            (x1 + radius, y1 + radius),
+            (x2 - radius, y1 + radius),
+            (x1 + radius, y2 - radius),
+            (x2 - radius, y2 - radius),
+        ):
+            cv2.circle(img, (cx, cy), radius, color, -1, cv2.LINE_AA)
+        return
+    cv2.line(img, (x1 + radius, y1), (x2 - radius, y1), color, 1, cv2.LINE_AA)
+    cv2.line(img, (x1 + radius, y2), (x2 - radius, y2), color, 1, cv2.LINE_AA)
+    cv2.line(img, (x1, y1 + radius), (x1, y2 - radius), color, 1, cv2.LINE_AA)
+    cv2.line(img, (x2, y1 + radius), (x2, y2 - radius), color, 1, cv2.LINE_AA)
+    cv2.ellipse(img, (x1 + radius, y1 + radius), (radius, radius), 180, 0, 90, color, 1, cv2.LINE_AA)
+    cv2.ellipse(img, (x2 - radius, y1 + radius), (radius, radius), 270, 0, 90, color, 1, cv2.LINE_AA)
+    cv2.ellipse(img, (x1 + radius, y2 - radius), (radius, radius), 90, 0, 90, color, 1, cv2.LINE_AA)
+    cv2.ellipse(img, (x2 - radius, y2 - radius), (radius, radius), 0, 0, 90, color, 1, cv2.LINE_AA)
+
+
+def _text(img, text: str, x: int, y: int, scale: float, color) -> None:
+    cv2.putText(img, text, (int(x), int(y)), cv2.FONT_HERSHEY_SIMPLEX, scale, color, 1, cv2.LINE_AA)
+
+
+def _hit_rect(event, x, y, hits, queue) -> None:
     if event != cv2.EVENT_LBUTTONUP:
         return
     for (cx, cy), radius, action in hits:

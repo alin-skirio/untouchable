@@ -234,9 +234,9 @@ def main() -> None:
     )
     if hud.preview:
         open_camera_window(hud)
-        print("Peach circle hides the camera. Rose circle quits.")
+        print("Hide camera tucks the preview away. People manages faces. Quit exits.")
     else:
-        print("Peach circle shows the camera. Rose circle quits.")
+        print("Show camera brings the preview back. Quit exits.")
         open_rail(hud)
     preview_opened_at = time.monotonic() if hud.preview else 0.0
 
@@ -523,7 +523,7 @@ def main() -> None:
             if not hud.preview:
                 if not window_open(RAIL_WINDOW):
                     open_rail(hud)
-                hud.draw_rail()
+                hud.draw_rail(status_lines)
             elif window_open(RAIL_WINDOW):
                 try:
                     cv2.destroyWindow(RAIL_WINDOW)
@@ -544,7 +544,7 @@ def main() -> None:
                         cv2.destroyWindow(CAM_WINDOW)
                     except cv2.error:
                         pass
-                    print("Camera hidden. Peach circle brings it back.")
+                    print("Camera hidden. Show brings it back.")
 
             key = cv2.waitKey(1) & 0xFF
             if not hud.preview:

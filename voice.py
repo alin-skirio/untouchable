@@ -205,6 +205,41 @@ async def run_realtime(key: str) -> None:
         def request_stop(_signum=None, _frame=None) -> None:
             stop.set()
 
+        def _schedule_handoff(text: str) -> None:
+            nonlocal hold_task, hold_text
+            hold_text = text.strip()
+            if hold_task is not None:
+                hold_task.cancel()
+            delay = (
+                HANDOFF_SETTLE_SEC if handoff_has_ask(hold_text) else HANDOFF_HOLD_SEC
+            )
+            ask = parse_desk_ask(hold_text)
+            if ask:
+                print(f"Task so far: {ask}  (sending in {delay:.1f}s)")
+            else:
+                print(f"Heard Desk. Keep talking — sending in {delay:.1f}s if I hear nothing else.")
+
+            async def _wait_then_send() -> None:
+                nonlocal hold_task
+                try:
+                    await asyncio.sleep(delay)
+                except asyncio.CancelledError:
+                    return
+                hold_task = None
+                blob = hold_text
+                if not presence.unlocked():
+                    print(
+                        "No recognized face in the camera. "
+                        "Look at the camera, then try again."
+                    )
+                    return
+                ask_now = parse_desk_ask(blob)
+                print(f"Handing off to DESK: {ask_now or '(work on this screen)'}")
+                result = await asyncio.to_thread(handoff_to_desk, blob)
+                print(f"Handoff: {result}")
+
+            hold_task = asyncio.create_task(_wait_then_send())
+
         signal.signal(signal.SIGINT, request_stop)
 
         async def sender() -> None:

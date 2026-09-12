@@ -17,4 +17,7 @@ simplified/
 .presence.json
 models/*.onnx.tmp
 simplified/
+handoffs/*.md
+handoffs/*.png
+.presence.json
 
