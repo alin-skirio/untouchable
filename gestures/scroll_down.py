@@ -6,7 +6,7 @@ from .pose import pinky_pointing_up
 
 
 class ScrollDown:
-    def __init__(self, lines_per_frame: float = 1.6):
+    def __init__(self, lines_per_frame: float = 4.0):
         self.lines_per_frame = lines_per_frame
         self.accrued = 0.0
 
