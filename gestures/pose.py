@@ -1,10 +1,10 @@
-"""Shared pose checks for the Scrolling mode."""
+"""Shared pose checks for scroll gestures."""
 
 from __future__ import annotations
 
 import math
 
-from ..landmarks import (
+from .landmarks import (
     INDEX_TIP,
     MIDDLE_MCP,
     MIDDLE_TIP,
@@ -15,6 +15,9 @@ from ..landmarks import (
     dist2,
 )
 
+TOGETHER = 0.42
+LINE_DEV = 0.18
+
 ALL_FINGERS = ("thumb", "index", "middle", "ring", "pinky")
 ALL_TIPS = (THUMB_TIP, INDEX_TIP, MIDDLE_TIP, RING_TIP, PINKY_TIP)
 ADJACENT_TIPS = (
@@ -24,6 +27,7 @@ ADJACENT_TIPS = (
     (RING_TIP, PINKY_TIP),
 )
 FOUR_TIPS = (INDEX_TIP, MIDDLE_TIP, RING_TIP, PINKY_TIP)
+PINKY_MCP = 17
 
 
 def palm_size(lm) -> float:
@@ -54,7 +58,7 @@ def tips_in_line(lm, palm: float, max_dev: float) -> bool:
     dx, dy = bx - ax, by - ay
     length = math.hypot(dx, dy)
     if length < 0.08:
-        return True  # clustered fist: already a single point / degenerate line
+        return True
     inv = 1.0 / (length * palm)
     return all(abs((x - ax) * dy - (y - ay) * dx) * inv <= max_dev for x, y in zip(xs, ys))
 
@@ -89,8 +93,19 @@ def palm_reach(lm, palm: float) -> float:
     return (total / len(ALL_TIPS)) / palm
 
 
-def pointing_up(lm) -> bool:
-    """True when the fingertips sit above the palm (image y grows downward)."""
+def pinky_pointing_up(lm, fingers_down: list[str]) -> bool:
+    """True when the pinky is extended and its tip sits above the palm and knuckle."""
+    if "pinky" in fingers_down:
+        return False
     _, cy = palm_center(lm)
-    tip_y = sum(lm[i].y for i in ALL_TIPS) / len(ALL_TIPS)
-    return tip_y < cy - 0.03
+    tip = lm[PINKY_TIP]
+    knuckle = lm[PINKY_MCP]
+    return tip.y < cy - 0.03 and tip.y < knuckle.y
+
+
+def all_fingers_pointing_up(lm, fingers_down: list[str]) -> bool:
+    """True when every fingertip sits above the palm and none of the four mains are curled."""
+    if any(name in fingers_down for name in ("index", "middle", "ring", "pinky")):
+        return False
+    _, cy = palm_center(lm)
+    return all(lm[i].y < cy - 0.03 for i in ALL_TIPS)

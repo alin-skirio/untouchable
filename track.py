@@ -8,11 +8,11 @@ Pinch right thumb+index+middle to start app switching (holds ⌘).
 Flap your index finger up and down while holding thumb+middle to send Tab.
 Release thumb+middle to select the active application.
 
-Make a tight right fist with all five fingertips touching and hold it
-for 10 seconds to enter Scrolling. Then raise the fingers slowly while
-they stay touching: the page scrolls up at the same rate and stops
-when the hand is fully open. Fist again to raise again. Drop the open
-fingers to ScrollDown.
+ScrollUp and ScrollDown are always watched on the right hand. Hold the
+pinky up for 3 seconds (fingers touching) to start ScrollUp, make a
+fist, then raise: the page follows and stops when all fingers point up
+at max palm-reach. Fist again to repeat. If the fingers separate, it
+cancels. Open and drop a lined-up hand for ScrollDown.
 
 Close the preview or use --no-preview; Ctrl+C to quit.
 """
@@ -30,7 +30,8 @@ import cv2
 import mediapipe as mp
 
 from gestures.app_switcher import AppSwitcher
-from gestures.scrolling import Scrolling
+from gestures.scroll_down import ScrollDown
+from gestures.scroll_up import ScrollUp
 from mac_keys import async_cmd, async_tap_tab, set_cmd_state, smooth_scroll
 
 TRAIL_LENGTH = 24
@@ -210,7 +211,8 @@ def main() -> None:
     pending: dict[str, tuple[str, int]] = {}
     
     switcher = AppSwitcher()
-    scrolling = Scrolling()
+    scroll_up = ScrollUp()
+    scroll_down = ScrollDown()
     
     last_cmd_tab_at = 0.0
     last_scroll_at = 0.0
@@ -322,36 +324,40 @@ def main() -> None:
                         if switcher.active:
                             status_lines.append("Right pinch: App Switcher Active (⌘ Held)")
 
-                        # --- Scrolling: fist arms the mode, then ScrollUp or ScrollDown ---
-                        scroll_action = scrolling.update(hand_landmarks, down)
-                        if scroll_action is not None:
-                            direction, amount = scroll_action
-                            wheel = amount if direction == "up" else -amount
+                        # Always check ScrollUp and ScrollDown
+                        up_lines = scroll_up.update(hand_landmarks, down)
+                        down_lines = 0 if up_lines > 0 else scroll_down.update(hand_landmarks, down)
+                        if up_lines > 0:
                             threading.Thread(
-                                target=smooth_scroll, args=(wheel,), daemon=True
+                                target=smooth_scroll, args=(up_lines,), daemon=True
                             ).start()
                             last_scroll_at = time.monotonic()
-                            last_scroll_amount = amount
-                            last_scroll_action = direction
-                        elif scrolling.active:
-                            if scrolling.scroll_up.from_fist:
-                                status_lines.append(
-                                    "ScrollUp: raise touching fingers — page follows"
-                                )
-                            else:
-                                status_lines.append(
-                                    "Scrolling: fist, then raise touching fingers"
-                                )
-                        elif scrolling.hold_seconds > 0:
+                            last_scroll_amount = up_lines
+                            last_scroll_action = "up"
+                        elif down_lines > 0:
+                            threading.Thread(
+                                target=smooth_scroll, args=(-down_lines,), daemon=True
+                            ).start()
+                            last_scroll_at = time.monotonic()
+                            last_scroll_amount = down_lines
+                            last_scroll_action = "down"
+                        elif scroll_up.phase == "raising":
                             status_lines.append(
-                                f"Scrolling: hold lined-up fist {scrolling.hold_seconds:.1f}/{scrolling.confirm_seconds:.0f}s"
+                                "ScrollUp: raise touching fingers — page follows"
+                            )
+                        elif scroll_up.phase == "wait_fist":
+                            status_lines.append("ScrollUp: make a fist")
+                        elif scroll_up.hold_seconds > 0:
+                            status_lines.append(
+                                f"ScrollUp: hold pinky up {scroll_up.hold_seconds:.1f}/{scroll_up.initiate_seconds:.0f}s"
                             )
 
             if not saw_right:
                 if switcher.active:
                     switcher.reset()
                     async_cmd(False)
-                scrolling.reset()
+                scroll_up.reset()
+                scroll_down.reset()
 
             for label, trail in trails.items():
                 if label not in seen:
