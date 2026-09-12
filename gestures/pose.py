@@ -17,6 +17,7 @@ from .landmarks import (
 
 TOGETHER = 0.42
 LINE_DEV = 0.18
+LINES_PER_FRAME = 6.0
 
 ALL_FINGERS = ("thumb", "index", "middle", "ring", "pinky")
 ALL_TIPS = (THUMB_TIP, INDEX_TIP, MIDDLE_TIP, RING_TIP, PINKY_TIP)
@@ -101,6 +102,13 @@ def pinky_pointing_up(lm, fingers_down: list[str]) -> bool:
     tip = lm[PINKY_TIP]
     knuckle = lm[PINKY_MCP]
     return tip.y < cy - 0.03 and tip.y < knuckle.y
+
+
+def pinky_only_up(lm, fingers_down: list[str]) -> bool:
+    """True when the pinky points up and thumb, index, middle, and ring are curled."""
+    down = set(fingers_down)
+    others_down = all(name in down for name in ("thumb", "index", "middle", "ring"))
+    return others_down and pinky_pointing_up(lm, fingers_down)
 
 
 def pointing_up(lm) -> bool:
