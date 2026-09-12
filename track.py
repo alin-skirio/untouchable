@@ -10,9 +10,9 @@ Release thumb+middle to select the active application.
 
 Pop a right fist open (index through pinky) to flick-scroll down.
 
-Point only the left pinky up (other fingers curled) to ScrollUp, or
-only the right pinky up to ScrollDown. Both are a smooth continuous
-scroll at the same speed.
+Point only the left pinky up (index, middle, and ring curled) to
+ScrollUp, or only the right pinky up to ScrollDown. The thumb is
+ignored. Both are a smooth continuous scroll at the same speed.
 
 Point index+middle with ring+pinky curled to move the macOS cursor.
 Curl index+middle to left-drag; add a pointed thumb to right-drag.

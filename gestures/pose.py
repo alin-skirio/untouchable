@@ -105,9 +105,9 @@ def pinky_pointing_up(lm, fingers_down: list[str]) -> bool:
 
 
 def pinky_only_up(lm, fingers_down: list[str]) -> bool:
-    """True when the pinky points up and thumb, index, middle, and ring are curled."""
+    """True when the pinky points up and index, middle, and ring are curled."""
     down = set(fingers_down)
-    others_down = all(name in down for name in ("thumb", "index", "middle", "ring"))
+    others_down = all(name in down for name in ("index", "middle", "ring"))
     return others_down and pinky_pointing_up(lm, fingers_down)
 
 
