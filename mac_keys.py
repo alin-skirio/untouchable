@@ -11,6 +11,7 @@ from typing import Optional
 kVK_Tab = 0x30
 kVK_ANSI_T = 0x11
 kVK_Command = 0x37
+kVK_PageUp = 0x74
 kCGHIDEventTap = 0
 kCGSessionEventTap = 1
 kCGHeadInsertEventTap = 0
@@ -270,6 +271,15 @@ def move_mouse(dx: float, dy: float, dragging: Optional[str] = None) -> None:
         pass
 
 
+def page_up() -> None:
+    try:
+        cg = _core_graphics()
+        _post_key(cg, kVK_PageUp, True)
+        _post_key(cg, kVK_PageUp, False)
+    except Exception:
+        pass
+
+
 def mouse_down(button: str) -> None:
     global _held_button
     if not _is_macos():
@@ -405,3 +415,7 @@ def start_cmd_t_monitor() -> CommandTMonitor:
         _cmd_t_monitor = CommandTMonitor()
         _cmd_t_monitor.start()
     return _cmd_t_monitor
+
+
+def async_page_up() -> None:
+    threading.Thread(target=page_up, daemon=True).start()

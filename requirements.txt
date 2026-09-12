@@ -1,5 +1,5 @@
-# Pinned for macOS system Python 3.9 (MediaPipe dropped 3.9 in later releases).
-mediapipe==0.10.9
-opencv-python==4.8.1.78
+# Pinned for Python 3.12 on macOS. MediaPipe 1.x removed mp.solutions (used by track.py).
+mediapipe==0.10.14
+opencv-python==4.10.0.84
 numpy==1.26.4
-protobuf==3.20.3
+protobuf==4.25.3

@@ -1,0 +1,96 @@
+"""Shared pose checks for the Scrolling mode."""
+
+from __future__ import annotations
+
+import math
+
+from ..landmarks import (
+    INDEX_TIP,
+    MIDDLE_MCP,
+    MIDDLE_TIP,
+    PINKY_TIP,
+    RING_TIP,
+    THUMB_TIP,
+    WRIST,
+    dist2,
+)
+
+ALL_FINGERS = ("thumb", "index", "middle", "ring", "pinky")
+ALL_TIPS = (THUMB_TIP, INDEX_TIP, MIDDLE_TIP, RING_TIP, PINKY_TIP)
+ADJACENT_TIPS = (
+    (THUMB_TIP, INDEX_TIP),
+    (INDEX_TIP, MIDDLE_TIP),
+    (MIDDLE_TIP, RING_TIP),
+    (RING_TIP, PINKY_TIP),
+)
+FOUR_TIPS = (INDEX_TIP, MIDDLE_TIP, RING_TIP, PINKY_TIP)
+
+
+def palm_size(lm) -> float:
+    return max(dist2(lm[WRIST], lm[MIDDLE_MCP]), 0.04)
+
+
+def all_fingers_down(fingers_down: list[str]) -> bool:
+    down = set(fingers_down)
+    return all(name in down for name in ALL_FINGERS)
+
+
+def four_fingers_open(fingers_down: list[str]) -> bool:
+    down = set(fingers_down)
+    return not any(name in down for name in ("index", "middle", "ring", "pinky"))
+
+
+def adjacent_distances_zero(lm, palm: float, together: float) -> bool:
+    """True when every neighboring fingertip pair is pinched (near-zero distance)."""
+    return all(dist2(lm[a], lm[b]) / palm <= together for a, b in ADJACENT_TIPS)
+
+
+def tips_in_line(lm, palm: float, max_dev: float) -> bool:
+    """True when thumb → pinky tips lie on one straight line."""
+    xs = [lm[i].x for i in ALL_TIPS]
+    ys = [lm[i].y for i in ALL_TIPS]
+    ax, ay = xs[0], ys[0]
+    bx, by = xs[-1], ys[-1]
+    dx, dy = bx - ax, by - ay
+    length = math.hypot(dx, dy)
+    if length < 0.08:
+        return True  # clustered fist: already a single point / degenerate line
+    inv = 1.0 / (length * palm)
+    return all(abs((x - ax) * dy - (y - ay) * dx) * inv <= max_dev for x, y in zip(xs, ys))
+
+
+def fingers_in_line(lm, palm: float, together: float, max_dev: float) -> bool:
+    """All five fingertips touch their neighbors and form a straight line."""
+    return adjacent_distances_zero(lm, palm, together) and tips_in_line(lm, palm, max_dev)
+
+
+def four_finger_width(lm, palm: float) -> float:
+    return dist2(lm[INDEX_TIP], lm[PINKY_TIP]) / palm
+
+
+def four_finger_y(lm) -> float:
+    """Average image-y of the four fingertips (increases downward)."""
+    return sum(lm[i].y for i in FOUR_TIPS) / 4.0
+
+
+def palm_center(lm) -> tuple[float, float]:
+    return (
+        (lm[WRIST].x + lm[MIDDLE_MCP].x) / 2.0,
+        (lm[WRIST].y + lm[MIDDLE_MCP].y) / 2.0,
+    )
+
+
+def palm_reach(lm, palm: float) -> float:
+    """Mean fingertip distance from the palm center, in palm units."""
+    cx, cy = palm_center(lm)
+    total = 0.0
+    for i in ALL_TIPS:
+        total += math.hypot(lm[i].x - cx, lm[i].y - cy)
+    return (total / len(ALL_TIPS)) / palm
+
+
+def pointing_up(lm) -> bool:
+    """True when the fingertips sit above the palm (image y grows downward)."""
+    _, cy = palm_center(lm)
+    tip_y = sum(lm[i].y for i in ALL_TIPS) / len(ALL_TIPS)
+    return tip_y < cy - 0.03

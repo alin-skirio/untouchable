@@ -8,8 +8,13 @@ Pinch right thumb+index+middle to start app switching (holds ⌘).
 Flap your index finger up and down while holding thumb+middle to send Tab.
 Release thumb+middle to select the active application.
 
-Hold right thumb+ring+pinky down, keep index+middle up and together, 
-and swipe up rapidly to scroll down dynamically based on swipe severity.
+Pop a right fist open (index through pinky) to flick-scroll down.
+
+Make a tight right fist with all five fingertips in a straight line
+(neighbor distances near zero) and hold it for 10 seconds to enter
+Scrolling. Keep that line, then open the fist until the fingers point
+up at max palm reach to ScrollUp one page. Close to a fist and open
+again to page up again. Drop the open fingers to ScrollDown.
 
 Point index+middle with ring+pinky curled to move the macOS cursor.
 Curl index+middle to left-drag; add a pointed thumb to right-drag.
@@ -33,9 +38,11 @@ import mediapipe as mp
 from gestures.app_switcher import AppSwitcher
 from gestures.cursor import PointerCursor
 from gestures.landmarks import palm_size_px
+from gestures.scrolling import Scrolling
 from gestures.swipe_scroller import SwipeScroller
 from mac_keys import (
     async_cmd,
+    async_page_up,
     async_tap_tab,
     move_mouse,
     mouse_down,
@@ -70,9 +77,10 @@ HAND_COLORS = {
 DEFAULT_COLOR = (0, 200, 255)
 
 
-def open_camera() -> cv2.VideoCapture:
+def open_camera(preferred: int | None = None) -> cv2.VideoCapture:
     """Tries indices 0, 1, and 2 to handle Continuity Camera or secondary webcams."""
-    for idx in (0, 1, 2):
+    indices = (preferred,) if preferred is not None else (0, 1, 2)
+    for idx in indices:
         cap = cv2.VideoCapture(idx, cv2.CAP_AVFOUNDATION)
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
@@ -180,6 +188,13 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Run without a window so tracking continues fully in the background",
     )
+    parser.add_argument(
+        "--camera",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Force camera index N (skips auto-prefer of the Mac built-in camera)",
+    )
     return parser.parse_args()
 
 
@@ -206,7 +221,7 @@ def main() -> None:
         min_detection_confidence=0.75,
         min_tracking_confidence=0.75,
     )
-    cap = open_camera()
+    cap = open_camera(preferred=args.camera)
     trails: dict[str, deque[tuple[int, int]]] = {
         "Left": deque(maxlen=TRAIL_LENGTH),
         "Right": deque(maxlen=TRAIL_LENGTH),
@@ -215,6 +230,7 @@ def main() -> None:
     pending: dict[str, tuple[str, int]] = {}
     
     switcher = AppSwitcher()
+    scrolling = Scrolling()
     scroller = SwipeScroller()
     pointer = PointerCursor()
     cmd_t = start_cmd_t_monitor()
@@ -222,6 +238,7 @@ def main() -> None:
     last_cmd_tab_at = 0.0
     last_scroll_at = 0.0
     last_scroll_amount = 0
+    last_scroll_action = ""
     last_ref_at = 0.0
     last_ref_msg = ""
     last_right_palm = 0.0
@@ -327,6 +344,7 @@ def main() -> None:
                             mouse_up(cursor.button_up)
 
                         if cursor.engaged:
+                            scrolling.reset()
                             scroller.reset()
                             if pointer.held_button == "right":
                                 status_lines.append("Right drag")
@@ -335,6 +353,7 @@ def main() -> None:
                             else:
                                 status_lines.append("Pointer")
                         elif was_pointing:
+                            scrolling.reset()
                             scroller.reset()
                         else:
                             started, tapped, ended = switcher.update(hand_landmarks)
@@ -352,13 +371,38 @@ def main() -> None:
                             if switcher.active:
                                 status_lines.append("Right pinch: App Switcher Active (⌘ Held)")
 
-                            scroll_amount = scroller.update(hand_landmarks, down)
-                            if scroll_amount > 0:
+                            scroll_action = scrolling.update(hand_landmarks, down)
+                            if scroll_action == "up":
+                                async_page_up()
+                                last_scroll_at = time.monotonic()
+                                last_scroll_amount = 1
+                                last_scroll_action = "up"
+                            elif scroll_action == "down":
                                 threading.Thread(
-                                    target=smooth_scroll, args=(-scroll_amount,), daemon=True
+                                    target=smooth_scroll, args=(-scrolling.scroll_amount,), daemon=True
                                 ).start()
                                 last_scroll_at = time.monotonic()
-                                last_scroll_amount = scroll_amount
+                                last_scroll_amount = scrolling.scroll_amount
+                                last_scroll_action = "down"
+                            elif scrolling.active:
+                                scroller.reset()
+                                status_lines.append(
+                                    "Scrolling: fist then point up for one page"
+                                )
+                            elif scrolling.hold_seconds > 0:
+                                scroller.reset()
+                                status_lines.append(
+                                    f"Scrolling: hold lined-up fist {scrolling.hold_seconds:.1f}/{scrolling.confirm_seconds:.0f}s"
+                                )
+                            else:
+                                scroll_amount = scroller.update(hand_landmarks, down)
+                                if scroll_amount > 0:
+                                    threading.Thread(
+                                        target=smooth_scroll, args=(-scroll_amount,), daemon=True
+                                    ).start()
+                                    last_scroll_at = time.monotonic()
+                                    last_scroll_amount = scroll_amount
+                                    last_scroll_action = "flick"
 
             if not saw_right:
                 if pointer.engaged or pointer.held_button:
@@ -369,6 +413,8 @@ def main() -> None:
                 if switcher.active:
                     switcher.reset()
                     async_cmd(False)
+                scrolling.reset()
+                scroller.reset()
 
             for label, trail in trails.items():
                 if label not in seen:
@@ -392,7 +438,12 @@ def main() -> None:
             if time.monotonic() - last_cmd_tab_at < 0.8:
                 status_lines.append("Sent Tab")
             if time.monotonic() - last_scroll_at < 1.0:
-                status_lines.append(f"Scrolled {last_scroll_amount} lines!")
+                if last_scroll_action == "up":
+                    status_lines.append("Scroll up (1 page)")
+                elif last_scroll_action == "flick":
+                    status_lines.append(f"Flick scroll ({abs(last_scroll_amount)} lines)")
+                else:
+                    status_lines.append(f"Scroll down ({abs(last_scroll_amount)} lines)")
             if not seen:
                 status_lines.append("No hands in view")
             if pointer.has_reference:
