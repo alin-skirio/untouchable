@@ -10,11 +10,22 @@ MIDDLE_TIP = 12
 RING_TIP = 16
 PINKY_TIP = 20
 WRIST = 0
+INDEX_MCP = 5
 MIDDLE_MCP = 9
+PINKY_MCP = 17
 
 
 def dist2(a, b) -> float:
     return math.hypot(a.x - b.x, a.y - b.y)
+
+
+def palm_size_px(hand_landmarks, width: float, height: float) -> float:
+    """Wrist-to-middle-MCP length in pixels (distance proxy)."""
+    lm = hand_landmarks.landmark
+    return math.hypot(
+        (lm[WRIST].x - lm[MIDDLE_MCP].x) * width,
+        (lm[WRIST].y - lm[MIDDLE_MCP].y) * height,
+    )
 
 
 def triple_pinch_span(hand_landmarks) -> float:

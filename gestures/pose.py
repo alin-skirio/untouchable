@@ -103,6 +103,13 @@ def pinky_pointing_up(lm, fingers_down: list[str]) -> bool:
     return tip.y < cy - 0.03 and tip.y < knuckle.y
 
 
+def pointing_up(lm) -> bool:
+    """True when the fingertips sit above the palm (image y grows downward)."""
+    _, cy = palm_center(lm)
+    tip_y = sum(lm[i].y for i in ALL_TIPS) / len(ALL_TIPS)
+    return tip_y < cy - 0.03
+
+
 def all_fingers_pointing_up(lm, fingers_down: list[str]) -> bool:
     """True when every fingertip sits above the palm and none of the four mains are curled."""
     if any(name in fingers_down for name in ("index", "middle", "ring", "pinky")):
