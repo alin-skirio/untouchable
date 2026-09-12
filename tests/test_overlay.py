@@ -27,6 +27,8 @@ class OverlayStateTests(unittest.TestCase):
         self.assertEqual(snap["display_name"], "Alex")
         self.assertEqual(snap["mode"], "intro")
         self.assertTrue(overlay.STATE_PATH.is_file())
+        self.assertTrue(overlay.STATE_TXT.is_file())
+        self.assertIn("intro=1", overlay.STATE_TXT.read_text(encoding="utf-8"))
 
     def test_click_or_esc_dismisses_intro_hud_stays_off(self) -> None:
         overlay.show_welcome("Alex")

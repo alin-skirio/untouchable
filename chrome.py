@@ -12,7 +12,15 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-from PIL import Image, ImageDraw, ImageFont
+
+try:
+    from PIL import Image, ImageDraw, ImageFont
+
+    HAS_PIL = True
+except ImportError:  # pragma: no cover
+    Image = ImageDraw = ImageFont = None  # type: ignore
+    HAS_PIL = False
+    print("Pillow is missing. Run:  pip install pillow")
 
 ROOT = Path(__file__).resolve().parent
 
@@ -119,7 +127,9 @@ def _font_file(weight: str = "regular") -> str | None:
 
 
 @lru_cache(maxsize=64)
-def font(size: int, weight: str = "regular") -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+def font(size: int, weight: str = "regular"):
+    if not HAS_PIL:
+        return None
     path = _font_file(weight)
     if path:
         try:
@@ -130,6 +140,8 @@ def font(size: int, weight: str = "regular") -> ImageFont.FreeTypeFont | ImageFo
 
 
 def measure(text: str, size: int, weight: str = "regular") -> tuple[int, int]:
+    if not HAS_PIL:
+        return max(1, int(len(text) * size * 0.55)), max(1, size)
     face = font(size, weight)
     box = face.getbbox(text or " ")
     return max(1, box[2] - box[0]), max(1, box[3] - box[1])
@@ -183,6 +195,9 @@ def glass_panel(
     fill: tuple[int, int, int, int] = (10, 11, 15, 150),
     outline: tuple[int, int, int, int] = (255, 255, 255, 28),
 ) -> None:
+    if not HAS_PIL:
+        cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), MUTE, 1, cv2.LINE_AA)
+        return
     h, w = frame.shape[:2]
     x1, y1 = max(0, int(x1)), max(0, int(y1))
     x2, y2 = min(w, int(x2)), min(h, int(y2))
@@ -209,6 +224,8 @@ def text(
 ) -> tuple[int, int]:
     if not content:
         return 0, 0
+    if not HAS_PIL:
+        return measure(content, size, weight)
     face = font(size, weight)
     tw, th = measure(content, size, weight)
     pad = max(6, size)
