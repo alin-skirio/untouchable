@@ -317,45 +317,25 @@ def draw_enroll_coach(
     message: str,
 ) -> None:
     """Big on-screen instructions for guided enrollment."""
+    import chrome
+
     h, w = frame.shape[:2]
     panel_h = 108
     y1 = h - panel_h - 10
-    overlay = frame.copy()
-    cv2.rectangle(overlay, (10, y1), (w - 10, h - 10), (10, 10, 10), -1)
-    cv2.addWeighted(overlay, 0.88, frame, 0.12, 0, frame)
-    edge = (210, 190, 40) if in_pose else (48, 48, 48)
-    cv2.rectangle(frame, (10, y1), (w - 10, h - 10), edge, 1, cv2.LINE_AA)
-
+    edge = (94, 234, 212, 90) if in_pose else (255, 255, 255, 28)
+    chrome.glass_panel(frame, 10, y1, w - 10, h - 10, radius=16, fill=(10, 11, 15, 210), outline=edge)
     step_label = f"{step_index + 1}/{len(ENROLL_STEPS)}  {name}".upper()
-    cv2.putText(
-        frame,
-        step_label,
-        (22, y1 + 22),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.4,
-        (150, 150, 150),
-        1,
-        cv2.LINE_AA,
-    )
-    cv2.putText(
-        frame,
-        step["title"],
-        (22, y1 + 48),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.62,
-        (236, 236, 236),
-        1,
-        cv2.LINE_AA,
-    )
-    cv2.putText(
+    chrome.text(frame, step_label, 22, y1 + 18, size=11, color=chrome.DIM, alpha=180, anchor="lt")
+    chrome.text(frame, step["title"], 22, y1 + 42, size=18, color=chrome.TEXT, weight="medium", anchor="lt")
+    chrome.text(
         frame,
         message or step["hint"],
-        (22, y1 + 72),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.45,
-        (210, 190, 40) if in_pose else (150, 150, 150),
-        1,
-        cv2.LINE_AA,
+        22,
+        y1 + 68,
+        size=13,
+        color=chrome.TEAL if in_pose else chrome.DIM,
+        alpha=220 if in_pose else 170,
+        anchor="lt",
     )
 
     bar_x1, bar_x2 = 22, w - 22
@@ -363,7 +343,7 @@ def draw_enroll_coach(
     cv2.rectangle(frame, (bar_x1, bar_y1), (bar_x2, bar_y2), (48, 48, 48), -1)
     fill = int(bar_x1 + (bar_x2 - bar_x1) * max(0.0, min(1.0, step_progress)))
     if fill > bar_x1:
-        cv2.rectangle(frame, (bar_x1, bar_y1), (fill, bar_y2), (210, 190, 40), -1)
+        cv2.rectangle(frame, (bar_x1, bar_y1), (fill, bar_y2), (94, 234, 212), -1)
 
     total = len(ENROLL_STEPS)
     for i in range(total):
@@ -371,7 +351,7 @@ def draw_enroll_coach(
         cy = y1 + 10
         done = i < step_index or (i == step_index and step_progress >= 1.0)
         current = i == step_index
-        color = (210, 190, 40) if done or current else (80, 80, 80)
+        color = (94, 234, 212) if done or current else (80, 80, 80)
         cv2.rectangle(frame, (cx, cy), (cx + 8, cy + 3), color, -1)
 
     # Direction cue chevrons
@@ -386,15 +366,17 @@ def draw_enroll_coach(
     elif sid == "down":
         cue = "v v v"
     if cue:
-        cv2.putText(
+        import chrome
+
+        chrome.text(
             frame,
             cue,
-            (w - 140, y1 + 48),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.7,
-            (210, 190, 40),
-            1,
-            cv2.LINE_AA,
+            w - 36,
+            y1 + 48,
+            size=18,
+            color=chrome.TEAL,
+            alpha=210,
+            anchor="rt",
         )
 
 
@@ -708,35 +690,19 @@ def landmark_bbox(landmarks, width: int, height: int, pad: float = 0.08):
 
 def draw_face_label(frame, box, text: str, color) -> None:
     """Draw a filled name plate on top of the face box."""
-    x1, y1, x2, y2 = box
-    font = cv2.FONT_HERSHEY_SIMPLEX
-    scale = 0.42
-    thickness = 1
-    (tw, th), _baseline = cv2.getTextSize(text, font, scale, thickness)
-    pad_x, pad_y = 7, 5
-    label_h = th + pad_y * 2
-    label_w = tw + pad_x * 2
+    import chrome
 
-    top = y1 - label_h - 3
+    x1, y1, x2, y2 = box
+    tw, th = chrome.measure(text, 12)
+    pad_x, pad_y = 8, 6
+    label_h = th + pad_y * 2
+    label_w = tw + pad_x * 2 + 10
+    top = y1 - label_h - 4
     if top < 4:
         top = y1 + 3
     left = max(4, min(x1, frame.shape[1] - label_w - 4))
-
     cv2.rectangle(frame, (x1, y1), (x2, y2), color, 1, cv2.LINE_AA)
-    overlay = frame.copy()
-    cv2.rectangle(overlay, (left, top), (left + label_w, top + label_h), (10, 10, 10), -1)
-    cv2.addWeighted(overlay, 0.88, frame, 0.12, 0, frame)
-    cv2.rectangle(frame, (left, top), (left + label_w, top + label_h), color, 1, cv2.LINE_AA)
-    cv2.putText(
-        frame,
-        text,
-        (left + pad_x, top + pad_y + th),
-        font,
-        scale,
-        (236, 236, 236),
-        thickness,
-        cv2.LINE_AA,
-    )
+    chrome.pill(frame, left, top, text, height=label_h, pad_x=pad_x, size=12, fill=(10, 11, 15, 210))
 
 
 def draw_face_structure(frame, landmarks, color=(90, 180, 255)) -> None:
@@ -1338,7 +1304,7 @@ class FaceID:
             mesh = self._mesh_for_box(results, box, width, height)
             if mesh is not None:
                 draw_face_structure(frame, mesh)
-            color = (40, 200, 120) if label != "Unknown" else (40, 180, 255)
+            color = (110, 231, 183) if label != "Unknown" else (36, 191, 251)
             draw_face_label(frame, draw_box, label, color)
             if label == "Unknown":
                 status.append("Face: Unknown")
@@ -1422,52 +1388,32 @@ class NameEntryUI:
         y1 = (h - box_h) // 2
         x2, y2 = x1 + box_w, y1 + box_h
 
-        overlay = frame.copy()
-        cv2.rectangle(overlay, (0, 0), (w, h), (0, 0, 0), -1)
-        cv2.addWeighted(overlay, 0.55, frame, 0.45, 0, frame)
+        import chrome
 
-        cv2.rectangle(frame, (x1, y1), (x2, y2), (10, 10, 10), -1)
-        cv2.rectangle(frame, (x1, y1), (x2, y2), (48, 48, 48), 1, cv2.LINE_AA)
-
-        cv2.putText(
-            frame,
-            "Your name",
-            (x1 + 16, y1 + 26),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.42,
-            (210, 190, 40),
-            1,
-            cv2.LINE_AA,
-        )
-        cv2.putText(
+        chrome.dim_frame(frame, 0.4)
+        chrome.glass_panel(frame, x1, y1, x2, y2, radius=16, fill=(10, 11, 15, 230))
+        chrome.text(frame, "Your name", x1 + 16, y1 + 20, size=12, color=chrome.TEAL, alpha=220, anchor="lt")
+        chrome.text(
             frame,
             "Type a name, then press Enter",
-            (x1 + 16, y1 + 46),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.38,
-            (150, 150, 150),
-            1,
-            cv2.LINE_AA,
+            x1 + 16,
+            y1 + 40,
+            size=12,
+            color=chrome.DIM,
+            alpha=180,
+            anchor="lt",
         )
 
         field_y1, field_y2 = y1 + 60, y1 + 90
-        cv2.rectangle(frame, (x1 + 16, field_y1), (x2 - 16, field_y2), (22, 22, 22), -1)
-        cv2.rectangle(frame, (x1 + 16, field_y1), (x2 - 16, field_y2), (48, 48, 48), 1, cv2.LINE_AA)
+        chrome.glass_panel(frame, x1 + 16, field_y1, x2 - 16, field_y2, radius=10, fill=(16, 18, 22, 220))
 
         caret = "|" if self._blink_on else " "
         if self.text:
             display = self.text + caret
-            color = (236, 236, 236)
+            color = chrome.TEXT
+            alpha = 230
         else:
             display = "name" + caret
-            color = (110, 110, 110)
-        cv2.putText(
-            frame,
-            display,
-            (x1 + 26, field_y1 + 22),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.52,
-            color,
-            1,
-            cv2.LINE_AA,
-        )
+            color = chrome.MUTE
+            alpha = 180
+        chrome.text(frame, display, x1 + 26, field_y1 + 15, size=15, color=color, alpha=alpha, anchor="lt")

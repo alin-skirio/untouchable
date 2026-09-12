@@ -10,8 +10,10 @@ from typing import Optional
 
 kVK_Tab = 0x30
 kVK_ANSI_T = 0x11
+kVK_ANSI_H = 0x04
 kVK_ANSI_Minus = 0x1B
 kVK_ANSI_KeypadMinus = 0x4E
+kVK_Escape = 0x35
 kVK_Command = 0x37
 kVK_PageUp = 0x74
 kCGHIDEventTap = 0
@@ -40,6 +42,7 @@ kCGMouseEventClickState = 1
 _macos_warned = False
 _held_button: Optional[str] = None
 _cmd_t_monitor: Optional["CommandTMonitor"] = None
+_hud_keys: Optional["HudKeyMonitor"] = None
 
 
 class CGPoint(ctypes.Structure):
@@ -506,6 +509,123 @@ def start_cmd_t_monitor() -> CommandTMonitor:
         _cmd_t_monitor = CommandTMonitor()
         _cmd_t_monitor.start()
     return _cmd_t_monitor
+
+
+class HudKeyMonitor:
+    """Global Quartz listen for H (toggle HUD) and Esc (dismiss intro).
+
+    H without modifiers is consumed so OpenCV does not also see it.
+    Esc is not consumed — track.py only uses it while the intro is up.
+    """
+
+    def __init__(self) -> None:
+        self._h = threading.Event()
+        self._esc = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+        self._runloop = None
+        self._tap = None
+        self._source = None
+        self._callback = None
+        self._cg = None
+
+    def start(self) -> None:
+        if not _is_macos() or self._thread is not None:
+            return
+        self._thread = threading.Thread(target=self._run, name="hud-keys", daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        if self._runloop is not None:
+            try:
+                cf = _core_foundation()
+                if self._tap and self._cg:
+                    self._cg.CGEventTapEnable(self._tap, False)
+                cf.CFRunLoopStop(self._runloop)
+            except Exception:
+                pass
+        self._runloop = None
+
+    def consume_h(self) -> bool:
+        if self._h.is_set():
+            self._h.clear()
+            return True
+        return False
+
+    def consume_esc(self) -> bool:
+        if self._esc.is_set():
+            self._esc.clear()
+            return True
+        return False
+
+    def _on_event(self, _proxy, event_type, event, _refcon):
+        cg = self._cg
+        if event_type in (kCGEventTapDisabledByTimeout, kCGEventTapDisabledByUserInput):
+            if self._tap and cg:
+                cg.CGEventTapEnable(self._tap, True)
+            return event
+        if event_type != kCGEventKeyDown or not cg:
+            return event
+        keycode = cg.CGEventGetIntegerValueField(event, kCGKeyboardEventKeycode)
+        flags = cg.CGEventGetFlags(event)
+        extras = (
+            kCGEventFlagMaskShift
+            | kCGEventFlagMaskControl
+            | kCGEventFlagMaskAlternate
+            | kCGEventFlagMaskCommand
+        )
+        if flags & extras:
+            return event
+        if keycode == kVK_ANSI_H:
+            self._h.set()
+            return None
+        if keycode == kVK_Escape:
+            self._esc.set()
+            return event
+        return event
+
+    def _run(self) -> None:
+        try:
+            cg = _core_graphics()
+            cf = _core_foundation()
+            self._cg = cg
+            self._callback = CGEventTapCallBack(self._on_event)
+            mask = ctypes.c_uint64(1 << kCGEventKeyDown)
+            tap = cg.CGEventTapCreate(
+                kCGSessionEventTap,
+                kCGHeadInsertEventTap,
+                kCGEventTapOptionDefault,
+                mask,
+                self._callback,
+                None,
+            )
+            if not tap:
+                print(
+                    "Could not listen for H. Enable Accessibility for Cursor or Terminal "
+                    "(System Settings → Privacy & Security → Accessibility)."
+                )
+                return
+            self._tap = tap
+            source = cf.CFMachPortCreateRunLoopSource(None, tap, 0)
+            if not source:
+                print("Could not attach the H key listener.")
+                return
+            self._source = source
+            loop = cf.CFRunLoopGetCurrent()
+            common = ctypes.c_void_p.in_dll(cf, "kCFRunLoopCommonModes")
+            cf.CFRunLoopAddSource(loop, source, common)
+            cg.CGEventTapEnable(tap, True)
+            self._runloop = loop
+            cf.CFRunLoopRun()
+        except Exception as exc:
+            print(f"H key listener failed: {exc}")
+
+
+def start_hud_keys() -> HudKeyMonitor:
+    global _hud_keys
+    if _hud_keys is None:
+        _hud_keys = HudKeyMonitor()
+        _hud_keys.start()
+    return _hud_keys
 
 
 def async_page_up() -> None:

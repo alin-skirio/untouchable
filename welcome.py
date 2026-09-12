@@ -1,4 +1,4 @@
-"""Welcome toast — same frosted overlay as the rest of the desk chrome."""
+"""Welcome intro — same frosted overlay host as the rest of the desk chrome."""
 
 from overlay import show_welcome, stop as close_welcome
 

@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Hand Control</title>
+  <style>
+    :root {
+      --base: #0a0b0f;
+      --text: rgba(255, 255, 255, 0.90);
+      --dim: rgba(255, 255, 255, 0.48);
+      --mute: rgba(255, 255, 255, 0.28);
+      --teal: #5eead4;
+      --violet: #a78bfa;
+      --green: #6ee7b7;
+      --amber: #fbbf24;
+      --rose: #fb7185;
+      --glass: rgba(12, 14, 18, 0.46);
+      --stroke: rgba(255, 255, 255, 0.12);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      width: 100%;
+      height: 100%;
+      background: transparent;
+      color: var(--text);
+      font-family: "SF Pro Display", "SF Pro Text", Inter, -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+      overflow: hidden;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    body.capture { cursor: pointer; }
+    body.pass { pointer-events: none; }
+    body.preview {
+      background:
+        radial-gradient(ellipse at 78% 6%, rgba(176, 122, 64, 0.22), transparent 36%),
+        radial-gradient(ellipse at 50% 40%, #1a1d24 0%, #0a0b0f 70%);
+    }
+    body.preview .desk-mock { display: block; }
+    .desk-mock {
+      display: none;
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+    }
+    .fake-win {
+      position: absolute;
+      border-radius: 16px;
+      border: 1px solid rgba(255,255,255,0.10);
+      background: rgba(28, 30, 36, 0.55);
+      box-shadow: 0 18px 50px rgba(0,0,0,0.35);
+    }
+    .fake-win.a { left: 9%; top: 18%; width: 38%; height: 42%; }
+    .fake-win.b { right: 12%; top: 20%; width: 32%; height: 46%; }
+    .fake-win .bar {
+      height: 28px;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+    }
+    .fake-win .dots { padding: 10px 12px; color: rgba(255,255,255,0.28); letter-spacing: 4px; font-size: 10px; }
+
+    .layer { position: fixed; inset: 0; }
+    .hidden { display: none !important; }
+
+    .intro {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: rgba(10, 11, 15, 0.42);
+      backdrop-filter: blur(28px) saturate(1.15);
+      -webkit-backdrop-filter: blur(28px) saturate(1.15);
+    }
+    .intro::before {
+      content: "";
+      position: absolute;
+      inset: -20%;
+      background:
+        radial-gradient(ellipse at 78% 8%, rgba(180, 120, 60, 0.18), transparent 42%),
+        radial-gradient(ellipse at 18% 88%, rgba(40, 60, 90, 0.16), transparent 46%);
+      pointer-events: none;
+    }
+    .intro-title {
+      font-weight: 280;
+      font-size: clamp(42px, 6.2vw, 72px);
+      letter-spacing: 0.01em;
+      line-height: 1;
+      color: rgba(255, 255, 255, 0.94);
+    }
+    .intro-sub {
+      margin-top: 18px;
+      font-size: 11px;
+      letter-spacing: 0.42em;
+      text-transform: uppercase;
+      color: var(--mute);
+    }
+    .intro-foot {
+      position: absolute;
+      bottom: 28px;
+      left: 0;
+      right: 0;
+      text-align: center;
+      font-size: 12px;
+      letter-spacing: 0.04em;
+      color: var(--mute);
+    }
+
+    .chips {
+      position: absolute;
+      top: 22px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 10px;
+      pointer-events: none;
+    }
+    .chip {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      height: 34px;
+      padding: 0 14px 0 12px;
+      border-radius: 999px;
+      background: var(--glass);
+      border: 1px solid var(--stroke);
+      backdrop-filter: blur(18px) saturate(1.2);
+      -webkit-backdrop-filter: blur(18px) saturate(1.2);
+      font-size: 13px;
+      color: var(--text);
+      white-space: nowrap;
+    }
+    .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      box-shadow: 0 0 8px currentColor;
+    }
+    .dot.green { background: var(--green); color: var(--green); }
+    .dot.violet { background: var(--violet); color: var(--violet); }
+    .dot.teal { background: var(--teal); color: var(--teal); }
+    .dot.amber { background: var(--amber); color: var(--amber); }
+    .dot.rose { background: var(--rose); color: var(--rose); }
+    .chip.warn { color: rgba(255, 220, 200, 0.88); }
+
+    .gestures {
+      position: absolute;
+      left: 50%;
+      bottom: 28px;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 22px;
+      padding: 12px 22px;
+      border-radius: 20px;
+      background: rgba(10, 12, 16, 0.62);
+      border: 1px solid var(--stroke);
+      backdrop-filter: blur(20px) saturate(1.15);
+      -webkit-backdrop-filter: blur(20px) saturate(1.15);
+      pointer-events: none;
+    }
+    .g-item { min-width: 92px; }
+    .g-title {
+      font-size: 12px;
+      color: var(--text);
+      margin-bottom: 3px;
+    }
+    .g-hint {
+      font-size: 11px;
+      color: var(--dim);
+      letter-spacing: 0.01em;
+    }
+
+    .hud-toggle {
+      position: absolute;
+      right: 22px;
+      bottom: 22px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      pointer-events: auto;
+      color: var(--mute);
+      font-size: 11px;
+      letter-spacing: 0.04em;
+    }
+    body.layer-toggle .hud-toggle {
+      right: 8px;
+      bottom: 8px;
+    }
+    .hud-btn {
+      appearance: none;
+      border: 1px solid var(--stroke);
+      background: rgba(14, 16, 20, 0.72);
+      color: var(--dim);
+      border-radius: 999px;
+      height: 28px;
+      padding: 0 12px;
+      font: inherit;
+      letter-spacing: 0.12em;
+      cursor: pointer;
+    }
+    .hud-btn.on {
+      color: var(--text);
+      border-color: rgba(94, 234, 212, 0.35);
+    }
+    .hud-btn .mark {
+      display: inline-block;
+      width: 7px;
+      height: 7px;
+      margin-right: 6px;
+      border-radius: 50%;
+      background: var(--mute);
+      vertical-align: 0;
+    }
+    .hud-btn.on .mark { background: var(--teal); }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 0.55; }
+      50% { opacity: 1; }
+    }
+    .live-dot { animation: pulse 2.6s ease-in-out infinite; }
+  </style>
+</head>
+<body>
+  <div class="desk-mock" aria-hidden="true">
+    <div class="fake-win a"><div class="bar"><div class="dots">● ● ●</div></div></div>
+    <div class="fake-win b"><div class="bar"><div class="dots">● ● ●</div></div></div>
+  </div>
+  <div id="intro" class="layer intro hidden">
+    <div class="intro-title" id="welcome">Welcome</div>
+    <div class="intro-sub">Desk ready</div>
+    <div class="intro-foot">Click or Esc to continue</div>
+  </div>
+
+  <div id="chips" class="chips hidden"></div>
+  <div id="gestures" class="gestures hidden">
+    <div class="g-item"><div class="g-title">Pointer</div><div class="g-hint">open → fist → gun</div></div>
+    <div class="g-item"><div class="g-title">Clicker</div><div class="g-hint">thumb + middle</div></div>
+    <div class="g-item"><div class="g-title">Scroll</div><div class="g-hint">index / pinky</div></div>
+    <div class="g-item"><div class="g-title">Switcher</div><div class="g-hint">pinch + flap</div></div>
+    <div class="g-item"><div class="g-title">Voice</div><div class="g-hint">hey Grok</div></div>
+  </div>
+
+  <div id="toggle" class="hud-toggle hidden">
+    <span>H · toggle HUD</span>
+    <button class="hud-btn" id="hud-btn" type="button"><span class="mark"></span>HUD</button>
+  </div>
+
+  <script>
+    const params = new URLSearchParams(location.search);
+    const layer = params.get("layer") || "chrome";
+    document.body.classList.add("layer-" + layer);
+    if (params.get("preview") === "1") document.body.classList.add("preview");
+
+    const introEl = document.getElementById("intro");
+    const welcomeEl = document.getElementById("welcome");
+    const chipsEl = document.getElementById("chips");
+    const gesturesEl = document.getElementById("gestures");
+    const toggleEl = document.getElementById("toggle");
+    const hudBtn = document.getElementById("hud-btn");
+
+    function chip(dot, label, extra) {
+      return `<div class="chip ${extra || ""}"><span class="dot ${dot} live-dot"></span>${label}</div>`;
+    }
+
+    function render(state) {
+      const name = state.display_name || state.name || "";
+      const intro = !!state.intro;
+      const hud = !!state.hud;
+      const locked = state.mode === "locked" || state.unlocked === false;
+      const showToggle = layer === "toggle" || intro || true;
+
+      welcomeEl.textContent = name ? `Welcome ${name}` : "Welcome";
+      introEl.classList.toggle("hidden", !intro || layer === "toggle");
+
+      const showChrome = hud && !intro && layer !== "toggle";
+      gesturesEl.classList.toggle("hidden", !showChrome);
+
+      let html = "";
+      if (locked && !intro) {
+        const reason = state.lock_reason || "unfamiliar face";
+        html = chip("amber", `Commands off · ${reason}`, "warn");
+      } else if (showChrome) {
+        html += chip("green", name ? `Unlocked` : "Unlocked");
+        if (state.voice) html += chip("violet", "Voice listening");
+        if (state.pointer) html += chip("teal", "Pointer armed");
+      }
+      chipsEl.innerHTML = html;
+      chipsEl.classList.toggle("hidden", !html || layer === "toggle" || intro);
+
+      toggleEl.classList.remove("hidden");
+      hudBtn.classList.toggle("on", hud);
+      hudBtn.innerHTML = `<span class="mark"></span>${hud ? "ON" : "HUD"}`;
+
+      const capture = !!state.capture && layer === "chrome";
+      document.body.classList.toggle("capture", capture);
+      document.body.classList.toggle("pass", !capture && layer === "chrome");
+    }
+
+    async function post(type) {
+      try {
+        await fetch("/event", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ type }),
+        });
+      } catch (err) { /* host gone */ }
+    }
+
+    async function poll() {
+      try {
+        const res = await fetch("/state.json", { cache: "no-store" });
+        if (res.ok) render(await res.json());
+      } catch (err) { /* host starting */ }
+    }
+
+    document.addEventListener("click", (ev) => {
+      if (ev.target.closest("#hud-btn") || ev.target.closest(".hud-toggle")) return;
+      if (document.body.classList.contains("capture")) post("dismiss_intro");
+    });
+    document.addEventListener("keydown", (ev) => {
+      if (ev.key === "Escape" || ev.key === "Esc") post("dismiss_intro");
+      if (ev.key === "h" || ev.key === "H") post("toggle_hud");
+    });
+    hudBtn.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      post("toggle_hud");
+    });
+
+    if (window.__OVERLAY_STATE__) render(window.__OVERLAY_STATE__);
+    poll();
+    setInterval(poll, 120);
+  </script>
+</body>
+</html>

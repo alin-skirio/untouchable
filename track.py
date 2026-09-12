@@ -17,6 +17,7 @@ into the fist to go faster; release it to return to the normal speed.
 Point index+middle+thumb (ring+pinky curled, thumb away from the tips) to move
 the cursor — only after open hand → fist → that gun pose. Make a fist to exit.
 Press S to warp the cursor onto the index tip.
+Press H to show or hide HUD chrome.
 ⌘- captures a desk-distance reference; the Desk slider is base sensitivity.
 Hold right thumb+ring+pinky down, keep index+middle up and together,
 and swipe up rapidly to scroll down dynamically based on swipe severity.
@@ -66,6 +67,7 @@ from hud import (
     window_open,
 )
 from launcher import close_tiktok_tab, next_tiktok_video, open_tiktok
+import chrome
 import overlay
 import presence
 from mac_keys import (
@@ -81,8 +83,9 @@ from mac_keys import (
     ScrollPump,
     smooth_scroll,
     start_cmd_t_monitor,
+    start_hud_keys,
 )
-from rim_flash import draw_pointer_bezel, flash_pointer_rim
+from rim_flash import flash_pointer_rim
 
 TRAIL_LENGTH = 24
 MAX_HANDS = 2
@@ -146,21 +149,6 @@ def draw_trail(frame, trail: deque[tuple[int, int]], color) -> None:
         cv2.line(frame, points[i - 1], points[i], color, thickness, cv2.LINE_AA)
 
 
-def draw_tip(frame, point: tuple[int, int], color, label: str) -> None:
-    cv2.circle(frame, point, 8, color, 1, cv2.LINE_AA)
-    cv2.circle(frame, point, 2, color, -1, cv2.LINE_AA)
-    cv2.putText(
-        frame,
-        label,
-        (point[0] + 10, point[1] - 10),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.4,
-        color,
-        1,
-        cv2.LINE_AA,
-    )
-
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Webcam hand tracker for Mac controls")
     parser.add_argument(
@@ -197,8 +185,6 @@ def main() -> None:
     signal.signal(signal.SIGTERM, stop)
 
     mp_hands = mp.solutions.hands
-    mp_drawing = mp.solutions.drawing_utils
-    mp_styles = mp.solutions.drawing_styles
 
     hands = mp_hands.Hands(
         static_image_mode=False,
@@ -247,12 +233,14 @@ def main() -> None:
         + (f": {', '.join(names)}" if names else "")
     )
     last_welcome = ""
+    overlay.start()
+    hud_keys = start_hud_keys()
     if hud.preview:
         open_camera_window(hud)
         print("Camera is optional. Hide camera or press C to return to the overlay.")
     else:
         open_key_sink()
-        print("Background overlay is on. Press C for the camera, Q or Ctrl+C to quit.")
+        print("Background overlay is on. Press H to toggle HUD, C for the camera, Q or Ctrl+C to quit.")
     preview_opened_at = time.monotonic() if hud.preview else 0.0
 
     try:
@@ -290,7 +278,14 @@ def main() -> None:
                 if (not was_armed) or (who != last_welcome):
                     overlay.show_welcome(who)
                     last_welcome = who
-            elif not armed:
+            overlay.sync(
+                name=known[0] if known else last_welcome,
+                unlocked=armed,
+                pointer=pointer.engaged,
+                lock_in=presence.lock_in_sec(),
+                lock_reason="" if armed else "unfamiliar face",
+            )
+            if not armed:
                 last_welcome = ""
             was_armed = armed
             if not armed:
@@ -316,13 +311,7 @@ def main() -> None:
                     seen.add(label)
 
                     if hud.on("landmarks"):
-                        mp_drawing.draw_landmarks(
-                            frame,
-                            hand_landmarks,
-                            mp_hands.HAND_CONNECTIONS,
-                            mp_styles.get_default_hand_landmarks_style(),
-                            mp_styles.get_default_hand_connections_style(),
-                        )
+                        chrome.draw_hand_landmarks(frame, hand_landmarks, width, height)
 
                     current = active_finger.get(label, DEFAULT_FINGER)
                     down = fingers_down(hand_landmarks)
@@ -358,9 +347,8 @@ def main() -> None:
                     ix, iy = int(tip.x * width), int(tip.y * height)
                     trail = trails.setdefault(label, deque(maxlen=TRAIL_LENGTH))
                     trail.append((ix, iy))
-                    if hud.on("landmarks"):
+                    if hud.on("landmarks") and hud.chrome and hud.preview:
                         draw_trail(frame, trail, color)
-                        draw_tip(frame, (ix, iy), color, f"{label} {current}")
                     extra = ""
                     if len(down) == 1:
                         extra = "  (1 down)"
@@ -548,6 +536,7 @@ def main() -> None:
             status_lines.append(f"Dist {pointer.distance_ratio(last_right_palm):.1f}x")
 
             action = hud.take_click()
+            key_snap = False
             if action == "quit":
                 break
             if action == "add_face":
@@ -559,6 +548,8 @@ def main() -> None:
                 if doomed:
                     face_id.delete_profile(doomed)
                     hud.set_faces(face_id.list_names())
+            elif action == "snap_cursor":
+                key_snap = True
             elif action == "toggle_faces" and (face_id.enrolling or name_ui.active):
                 pass
             elif action:
@@ -587,8 +578,7 @@ def main() -> None:
                     pass
 
             if hud.preview:
-                hud.draw_panel(frame, status_lines)
-                draw_pointer_bezel(frame, pointer.engaged)
+                hud.draw_panel(frame, status_lines, pointer_engaged=pointer.engaged)
                 name_ui.draw(frame)
                 cv2.imshow(CAM_WINDOW, frame)
                 if (
@@ -606,6 +596,20 @@ def main() -> None:
                     print("Camera hidden. Overlay stays up. Press C to show the camera.")
 
             key = cv2.waitKey(1) & 0xFF
+            overlay.tick()
+            pressed_h = hud_keys.consume_h() or key in (ord("h"), ord("H"))
+            pressed_esc = hud_keys.consume_esc() or key == 27
+            if pressed_h and not name_ui.active:
+                if hud.preview:
+                    hud.chrome = not hud.chrome
+                    overlay.set_hud(hud.chrome)
+                    print(f"Camera HUD {'on' if hud.chrome else 'off'}.")
+                else:
+                    overlay.toggle_hud()
+                continue
+            if overlay.intro_active() and pressed_esc:
+                overlay.dismiss_intro()
+                continue
             if key in (ord("c"), ord("C")) and not name_ui.active and not hud.faces_open:
                 if hud.preview:
                     hud.preview = False
@@ -659,7 +663,7 @@ def main() -> None:
                 continue
             if key in (ord("q"),):
                 break
-            if key in (ord("s"), ord("S")):
+            if key in (ord("s"), ord("S")) or key_snap:
                 if not armed or switcher.active or not hud.on("pointer"):
                     pass
                 elif saw_right and last_right_index is not None:

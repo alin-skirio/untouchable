@@ -36,7 +36,7 @@ macOS will ask for **Camera** on first launch. Gestures that type, click, or scr
 
 OpenCV YuNet + SFace identify faces on the same camera feed. Commands stay off until a saved profile is in view.
 
-- A known face unlocks immediately and shows a **Welcome, Name** pill.
+- A known face unlocks immediately and shows a **Welcome {Name}** frost intro (click, Esc, or ~2.5s).
 - An empty frame does not lock. Walk away; the desk stays armed.
 - If every visible face is a stranger for **5 seconds**, gestures and voice lock again.
 
@@ -97,9 +97,14 @@ Hidden by default. **C** toggles it. While it is open:
 | **A** | Enroll a face |
 | **L** | People list |
 | **S** | Place the cursor on the index tip |
-| **Q** / **Esc** | Quit (Esc also cancels enroll) |
+| **H** | Toggle HUD chrome |
+| **Q** / **Esc** | Quit (Esc dismisses the intro first; also cancels enroll) |
 
-The overlay welcome pill is the only always-on chrome. Status toasts stay off.
+After the intro the desk stays clear: HUD chrome defaults **off**. Press **H** (or the small HUD control) for status chips and the gesture hint bar. The camera window defaults HUD **on**; **H** hides it down to corner brackets.
+
+**H** is a global desk shortcut (same Accessibility permission as ⌘-). The Terminal/overlay window does not need focus. Watch the console for `HUD on` / `HUD off`. If the frost cards never appear, check `.overlay.host.log`.
+
+A locked / unfamiliar-face session restyles to a quiet amber “Commands off · unfamiliar face” state. Gestures, voice, and Face ID are unchanged.
 
 ## Layout
 
@@ -115,4 +120,7 @@ The overlay welcome pill is the only always-on chrome. Status toasts stay off.
 | `browser.py` | Front tab URL / HTML from Zen, Safari, or Chrome |
 | `simplify.py` | Page → Grok Imagine flyer |
 | `handoff.py` | Screen + page packet to the DESK Grok Bot |
-| `overlay.py` | Welcome pill |
+| `overlay.py` | Desk intro frost + HUD overlay |
+| `overlay_hud.html` | Overlay chrome (WebView) |
+| `chrome.py` | Shared tokens + PIL camera type |
+| `hud.py` | Camera window chrome |
