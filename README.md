@@ -5,7 +5,7 @@ Personal Mac experiment: use a webcam to read hand motion, then later map that m
 ## Run
 
 ```bash
-cd ~/hand-control
+cd ~/code/personal/untouchable
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt

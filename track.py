@@ -164,6 +164,13 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Run without a window so tracking continues fully in the background",
     )
+    parser.add_argument(
+        "--camera",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Force camera index N (skips auto-prefer of the Mac built-in camera)",
+    )
     return parser.parse_args()
 
 
@@ -190,7 +197,7 @@ def main() -> None:
         min_detection_confidence=0.75,
         min_tracking_confidence=0.75,
     )
-    cap = open_camera()
+    cap = open_camera(preferred=args.camera)
     trails: dict[str, deque[tuple[int, int]]] = {
         "Left": deque(maxlen=TRAIL_LENGTH),
         "Right": deque(maxlen=TRAIL_LENGTH),
