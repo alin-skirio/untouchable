@@ -17,8 +17,8 @@ from .landmarks import (
 
 TOGETHER = 0.42
 LINE_DEV = 0.18
-LINES_PER_FRAME = 6.0
-FAST_LINES_PER_FRAME = 12.0
+LINES_PER_FRAME = 12.0
+FAST_LINES_PER_FRAME = 24.0
 THUMB_TUCKED = 1.05
 
 ALL_FINGERS = ("thumb", "index", "middle", "ring", "pinky")
