@@ -22,6 +22,9 @@ ROOT = Path(__file__).resolve().parent
 HOST = ROOT / "overlay_host.jxa"
 PAGE = ROOT / "overlay_hud.html"
 VOICE_PATH = ROOT / ".voice.json"
+STATE_PATH = ROOT / ".overlay.json"
+EVENT_PATH = ROOT / ".overlay.event"
+LOG_PATH = ROOT / ".overlay.host.log"
 INTRO_SEC = 2.5
 MAX_NAME = 28
 STALE_VOICE_SEC = 4.0
@@ -38,7 +41,7 @@ _state = {
     "hud": False,
     "name": "",
     "display_name": "",
-    "unlocked": False,
+    "unlocked": True,
     "voice": False,
     "pointer": False,
     "lock_in": None,
@@ -82,6 +85,32 @@ def desk_hud() -> bool:
         return bool(_state["hud"])
 
 
+def _write_state() -> None:
+    payload = snapshot()
+    try:
+        tmp = STATE_PATH.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(payload), encoding="utf-8")
+        tmp.replace(STATE_PATH)
+    except OSError:
+        pass
+
+
+def _drain_events() -> None:
+    if not EVENT_PATH.is_file():
+        return
+    try:
+        payload = json.loads(EVENT_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        payload = {}
+    try:
+        EVENT_PATH.unlink(missing_ok=True)
+    except OSError:
+        pass
+    event = str(payload.get("type") or "")
+    if event:
+        apply_event(event)
+
+
 def _set(**kwargs) -> None:
     with _lock:
         _state.update(kwargs)
@@ -92,6 +121,7 @@ def _set(**kwargs) -> None:
             _state["mode"] = "locked"
         else:
             _state["mode"] = "desk"
+    _write_state()
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -152,14 +182,24 @@ def start() -> None:
     """Launch the overlay server (and the native host on macOS)."""
     global _server, _thread, _port, _started
     if _started and _server is not None:
+        _ensure_host()
         return
     _started = True
     _port = _free_port()
     _server = ThreadingHTTPServer(("127.0.0.1", _port), _Handler)
     _thread = threading.Thread(target=_server.serve_forever, name="overlay-hud", daemon=True)
     _thread.start()
+    _write_state()
     if sys.platform == "darwin":
         _start_host()
+
+
+def _ensure_host() -> None:
+    if sys.platform != "darwin":
+        return
+    if _proc is not None and _proc.poll() is None:
+        return
+    _start_host()
 
 
 def _start_host() -> None:
@@ -167,15 +207,38 @@ def _start_host() -> None:
     if _proc is not None and _proc.poll() is None:
         return
     if not HOST.is_file():
+        print("Overlay host script is missing; desk HUD will not draw.")
         return
-    url = f"http://127.0.0.1:{_port}/"
+    log = None
     try:
+        log = LOG_PATH.open("w", encoding="utf-8")
         _proc = subprocess.Popen(
-            ["osascript", "-l", "JavaScript", str(HOST), url],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            [
+                "osascript",
+                "-l",
+                "JavaScript",
+                str(HOST),
+                str(STATE_PATH),
+                str(EVENT_PATH),
+                str(LOG_PATH),
+            ],
+            stdout=log,
+            stderr=log,
         )
-    except OSError:
+    except OSError as exc:
+        print(f"Could not start overlay host: {exc}")
+        _proc = None
+        if log is not None:
+            log.close()
+        return
+    time.sleep(0.25)
+    if _proc is not None and _proc.poll() is not None:
+        detail = ""
+        try:
+            detail = LOG_PATH.read_text(encoding="utf-8").strip()
+        except OSError:
+            detail = f"exit {_proc.returncode}"
+        print(f"Overlay host exited immediately ({detail or 'no log'}). Desk HUD will not draw.")
         _proc = None
 
 
@@ -219,6 +282,9 @@ def toggle_hud() -> None:
         dismiss_intro()
     with _lock:
         _state["hud"] = not bool(_state["hud"])
+        visible = bool(_state["hud"])
+    _write_state()
+    print(f"HUD {'on' if visible else 'off'}.")
 
 
 def set_hud(visible: bool) -> None:
@@ -238,6 +304,8 @@ def sync(
     """Push live desk status into the overlay (no-op until the host is up)."""
     if not _started:
         return
+    _ensure_host()
+    _drain_events()
     who = display_name(name, MAX_NAME) if name else snapshot()["display_name"]
     listening = _voice_listening() if voice is None else bool(voice)
     reason = lock_reason if not unlocked else ""
@@ -262,7 +330,8 @@ def set_status(_title: str, _detail: str = "", _locked: bool = False) -> None:
 
 
 def tick() -> None:
-    """Auto-dismiss the intro after INTRO_SEC."""
+    """Auto-dismiss the intro after INTRO_SEC and apply overlay clicks."""
+    _drain_events()
     if not intro_active():
         return
     if time.monotonic() - _intro_started >= INTRO_SEC:
@@ -298,6 +367,11 @@ def stop() -> None:
     _started = False
     _port = 0
     _intro_started = 0.0
+    for path in (STATE_PATH, EVENT_PATH):
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass
     _set(
         mode="desk",
         intro=False,

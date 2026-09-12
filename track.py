@@ -83,6 +83,7 @@ from mac_keys import (
     ScrollPump,
     smooth_scroll,
     start_cmd_t_monitor,
+    start_hud_keys,
 )
 from rim_flash import flash_pointer_rim
 
@@ -232,12 +233,14 @@ def main() -> None:
         + (f": {', '.join(names)}" if names else "")
     )
     last_welcome = ""
+    overlay.start()
+    hud_keys = start_hud_keys()
     if hud.preview:
         open_camera_window(hud)
         print("Camera is optional. Hide camera or press C to return to the overlay.")
     else:
         open_key_sink()
-        print("Background overlay is on. Press C for the camera, Q or Ctrl+C to quit.")
+        print("Background overlay is on. Press H to toggle HUD, C for the camera, Q or Ctrl+C to quit.")
     preview_opened_at = time.monotonic() if hud.preview else 0.0
 
     try:
@@ -594,13 +597,17 @@ def main() -> None:
 
             key = cv2.waitKey(1) & 0xFF
             overlay.tick()
-            if key in (ord("h"), ord("H")) and not name_ui.active:
+            pressed_h = hud_keys.consume_h() or key in (ord("h"), ord("H"))
+            pressed_esc = hud_keys.consume_esc() or key == 27
+            if pressed_h and not name_ui.active:
                 if hud.preview:
                     hud.chrome = not hud.chrome
+                    overlay.set_hud(hud.chrome)
+                    print(f"Camera HUD {'on' if hud.chrome else 'off'}.")
                 else:
                     overlay.toggle_hud()
                 continue
-            if overlay.intro_active() and key == 27:
+            if overlay.intro_active() and pressed_esc:
                 overlay.dismiss_intro()
                 continue
             if key in (ord("c"), ord("C")) and not name_ui.active and not hud.faces_open:

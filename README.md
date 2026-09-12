@@ -102,6 +102,8 @@ Hidden by default. **C** toggles it. While it is open:
 
 After the intro the desk stays clear: HUD chrome defaults **off**. Press **H** (or the small HUD control) for status chips and the gesture hint bar. The camera window defaults HUD **on**; **H** hides it down to corner brackets.
 
+**H** is a global desk shortcut (same Accessibility permission as ⌘-). The Terminal/overlay window does not need focus. Watch the console for `HUD on` / `HUD off`. If the frost cards never appear, check `.overlay.host.log`.
+
 A locked / unfamiliar-face session restyles to a quiet amber “Commands off · unfamiliar face” state. Gestures, voice, and Face ID are unchanged.
 
 ## Layout
