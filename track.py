@@ -10,12 +10,13 @@ Release thumb+middle to select the active application.
 
 Pop a right fist open (index through pinky) to flick-scroll down.
 
-Point only the left pinky up (index, middle, and ring curled) to
+Point only the right index up (middle, ring, and pinky curled) to
 ScrollUp, or only the right pinky up to ScrollDown. Press the thumb
 into the fist to go faster; release it to return to the normal speed.
 
-Point index+middle+thumb with ring+pinky curled to move the cursor — but only after
-open hand → fist → that pose. Press S to warp the cursor onto the index tip.
+Point index+middle+thumb (ring+pinky curled, thumb away from the tips) to move
+the cursor — only after open hand → fist → that gun pose. Make a fist to exit.
+Press S to warp the cursor onto the index tip.
 ⌘- captures a desk-distance reference; the Desk slider is base sensitivity.
 Hold right thumb+ring+pinky down, keep index+middle up and together,
 and swipe up rapidly to scroll down dynamically based on swipe severity.
@@ -29,7 +30,8 @@ to close the tab and leave the mode.
 Face recognition runs on the same camera feed. Press A to add a named
 profile (saved in profiles.db), L to list profiles.
 
-Close the preview or use --no-preview; Ctrl+C to quit.
+Runs as a background overlay by default. Press C for the camera window,
+or start with --preview. Ctrl+C or Q quits.
 """
 
 from __future__ import annotations
@@ -48,6 +50,7 @@ from faceid import FaceID, NameEntryUI, open_camera
 from gestures.app_switcher import AppSwitcher
 from gestures.cursor import PointerCursor
 from gestures.landmarks import INDEX_TIP, palm_size_px
+from gestures.pose import index_only_up
 from gestures.scroll_down import ScrollDown
 from gestures.scroll_up import ScrollUp
 from gestures.flick_up import FlickUp, rise_threshold_px
@@ -57,11 +60,13 @@ from hud import (
     CAM_WINDOW,
     RAIL_WINDOW,
     CameraHud,
+    close_key_sink,
     open_camera_window,
-    open_rail,
+    open_key_sink,
     window_open,
 )
 from launcher import close_tiktok_tab, next_tiktok_video, open_tiktok
+import overlay
 import presence
 from mac_keys import (
     async_cmd,
@@ -73,6 +78,7 @@ from mac_keys import (
     release_mouse,
     set_cmd_state,
     set_mouse_position,
+    ScrollPump,
     smooth_scroll,
     start_cmd_t_monitor,
 )
@@ -158,9 +164,14 @@ def draw_tip(frame, point: tuple[int, int], color, label: str) -> None:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Webcam hand tracker for Mac controls")
     parser.add_argument(
+        "--preview",
+        action="store_true",
+        help="Show the optional camera window (desk runs as an overlay by default)",
+    )
+    parser.add_argument(
         "--no-preview",
         action="store_true",
-        help="Run without a window so tracking continues fully in the background",
+        help="Keep the camera window closed (default)",
     )
     parser.add_argument(
         "--camera",
@@ -175,7 +186,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     hud = CameraHud()
-    hud.preview = not args.no_preview
+    hud.preview = bool(args.preview) and not args.no_preview
     running = True
 
     def stop(_signum=None, _frame=None) -> None:
@@ -209,6 +220,7 @@ def main() -> None:
     switcher = AppSwitcher()
     scroll_up = ScrollUp()
     scroll_down = ScrollDown()
+    scroll_pump = ScrollPump()
     scroller = SwipeScroller()
     pointer = PointerCursor()
     t_pose = TPose()
@@ -227,18 +239,20 @@ def main() -> None:
     last_right_palm = 0.0
     last_right_index: tuple[float, float] | None = None
     failed_frame_count = 0
+    was_armed = False
 
     names = face_id.list_names()
     print(
         f"Loaded {len(names)} face profile(s) from {face_id.profiles_dir}"
         + (f": {', '.join(names)}" if names else "")
     )
+    last_welcome = ""
     if hud.preview:
         open_camera_window(hud)
-        print("Hide camera tucks the preview away. People manages faces. Quit exits.")
+        print("Camera is optional. Hide camera or press C to return to the overlay.")
     else:
-        print("Show camera brings the preview back. Quit exits.")
-        open_rail(hud)
+        open_key_sink()
+        print("Background overlay is on. Press C for the camera, Q or Ctrl+C to quit.")
     preview_opened_at = time.monotonic() if hud.preview else 0.0
 
     try:
@@ -264,16 +278,27 @@ def main() -> None:
             seen: set[str] = set()
             status_lines: list[str] = []
             saw_right = False
-            saw_left = False
+            scroll_rate = 0.0
             pose_hands: list[tuple[object, list[str]]] = []
 
             # Face recognition on the shared feed — also the lock for gestures.
             status_lines.extend(face_id.process(frame, rgb))
-            known = face_id.recognized_names()
-            presence.publish(known)
-            armed = bool(known)
+            known, unknown = face_id.live_scene()
+            armed = presence.update(known, 0 if face_id.enrolling else unknown)
+            if armed and known:
+                who = known[0]
+                if (not was_armed) or (who != last_welcome):
+                    overlay.show_welcome(who)
+                    last_welcome = who
+            elif not armed:
+                last_welcome = ""
+            was_armed = armed
             if not armed:
                 status_lines.insert(0, "Locked")
+            else:
+                remaining = presence.lock_in_sec()
+                if remaining is not None:
+                    status_lines.append(f"Unknown face — lock in {remaining:.0f}s")
 
             if result.multi_hand_landmarks:
                 handedness_list = result.multi_handedness or []
@@ -345,18 +370,6 @@ def main() -> None:
                         f"{label}  {current}  x={tip.x:.2f}  y={tip.y:.2f}{extra}"
                     )
 
-                    if label == "Left":
-                        saw_left = True
-                        if armed and hud.on("scroll_up"):
-                            up_lines = scroll_up.update(hand_landmarks, down)
-                            if up_lines > 0:
-                                threading.Thread(
-                                    target=smooth_scroll, args=(up_lines,), daemon=True
-                                ).start()
-                                last_scroll_at = time.monotonic()
-                                last_scroll_amount = up_lines
-                                last_scroll_action = "up"
-
                     if label == "Right":
                         saw_right = True
                         last_right_palm = palm_px
@@ -364,7 +377,15 @@ def main() -> None:
                         last_right_index = (index.x, index.y)
 
                         was_pointing = pointer.engaged
-                        if armed and hud.on("pointer"):
+                        scrolling_up = (
+                            hud.on("scroll_up")
+                            and index_only_up(hand_landmarks.landmark, down)
+                        )
+
+                        if switcher.busy:
+                            pointer.suppress_arm()
+
+                        if armed and hud.on("pointer") and not switcher.busy:
                             cursor = pointer.update(hand_landmarks, down, (width, height))
                             if cursor.dx or cursor.dy:
                                 move_mouse(cursor.dx, cursor.dy)
@@ -377,6 +398,7 @@ def main() -> None:
                                 flash_pointer_rim(False)
 
                             if cursor.engaged:
+                                scroll_up.reset()
                                 scroll_down.reset()
                                 scroller.reset()
                                 if cursor.click == "left":
@@ -386,16 +408,22 @@ def main() -> None:
                                 else:
                                     status_lines.append("Pointer")
                             elif was_pointing:
+                                scroll_up.reset()
                                 scroll_down.reset()
                                 scroller.reset()
                             else:
                                 status_lines.append(pointer.arm_hint)
+                        elif was_pointing and switcher.busy:
+                            pointer.reset()
+                            flash_pointer_rim(False)
 
                         if armed and not pointer.engaged:
-                            if hud.on("app_switcher"):
+                            if hud.on("app_switcher") and (switcher.active or not scrolling_up):
                                 started, tapped, ended = switcher.update(hand_landmarks)
 
                                 if started:
+                                    pointer.suppress_arm()
+                                    scroll_up.reset()
                                     async_cmd(True)
                                     async_tap_tab()
                                     last_cmd_tab_at = time.monotonic()
@@ -403,23 +431,37 @@ def main() -> None:
                                     async_tap_tab()
                                     last_cmd_tab_at = time.monotonic()
                                 elif ended:
+                                    pointer.suppress_arm()
                                     async_cmd(False)
 
                                 if switcher.active:
                                     status_lines.append("App switcher")
+                            elif switcher.active:
+                                switcher.reset()
+                                async_cmd(False)
 
-                            if hud.on("scroll_down"):
-                                down_lines = scroll_down.update(hand_landmarks, down)
-                                if down_lines > 0:
-                                    threading.Thread(
-                                        target=smooth_scroll, args=(-down_lines,), daemon=True
-                                    ).start()
+                            if hud.on("scroll_up") and not switcher.busy:
+                                up_rate = scroll_up.update(hand_landmarks, down)
+                                if up_rate > 0:
+                                    switcher.reset()
+                                    scroll_rate = up_rate
                                     last_scroll_at = time.monotonic()
-                                    last_scroll_amount = down_lines
+                                    last_scroll_amount = int(up_rate)
+                                    last_scroll_action = "up"
+                            else:
+                                if switcher.busy:
+                                    scroll_up.reset()
+                                up_rate = 0.0
+                            if hud.on("scroll_down"):
+                                down_rate = scroll_down.update(hand_landmarks, down)
+                                if down_rate > 0:
+                                    scroll_rate = -down_rate
+                                    last_scroll_at = time.monotonic()
+                                    last_scroll_amount = int(down_rate)
                                     last_scroll_action = "down"
                             else:
-                                down_lines = 0
-                            if down_lines <= 0 and hud.on("flick"):
+                                down_rate = 0.0
+                            if down_rate <= 0 and up_rate <= 0 and hud.on("flick"):
                                 scroll_amount = scroller.update(hand_landmarks, down)
                                 if scroll_amount > 0:
                                     threading.Thread(
@@ -429,9 +471,6 @@ def main() -> None:
                                     last_scroll_amount = scroll_amount
                                     last_scroll_action = "flick"
 
-            if not armed or not saw_left:
-                scroll_up.reset()
-
             if not armed or not saw_right:
                 if pointer.engaged:
                     pointer.reset()
@@ -439,8 +478,12 @@ def main() -> None:
                 if switcher.active:
                     switcher.reset()
                     async_cmd(False)
+                scroll_up.reset()
                 scroll_down.reset()
+                scroll_rate = 0.0
                 scroller.reset()
+
+            scroll_pump.set_rate(scroll_rate)
 
             # Two flat hands held perpendicular (a "T") toggle TikTok mode.
             if not armed or pointer.engaged or not hud.on("t_pose"):
@@ -533,14 +576,11 @@ def main() -> None:
                         cv2.destroyWindow(CAM_WINDOW)
                     except cv2.error:
                         pass
+                    open_key_sink()
             if not seen and not face_id.enrolling and "No hands in view" not in status_lines:
                 status_lines.append("No hands in view")
 
-            if not hud.preview:
-                if not window_open(RAIL_WINDOW):
-                    open_rail(hud)
-                hud.draw_rail(status_lines)
-            elif window_open(RAIL_WINDOW):
+            if window_open(RAIL_WINDOW):
                 try:
                     cv2.destroyWindow(RAIL_WINDOW)
                 except cv2.error:
@@ -562,9 +602,26 @@ def main() -> None:
                         cv2.destroyWindow(CAM_WINDOW)
                     except cv2.error:
                         pass
-                    print("Camera hidden. Show brings it back.")
+                    open_key_sink()
+                    print("Camera hidden. Overlay stays up. Press C to show the camera.")
 
             key = cv2.waitKey(1) & 0xFF
+            if key in (ord("c"), ord("C")) and not name_ui.active and not hud.faces_open:
+                if hud.preview:
+                    hud.preview = False
+                    name_ui.close()
+                    hud.close_faces()
+                    try:
+                        cv2.destroyWindow(CAM_WINDOW)
+                    except cv2.error:
+                        pass
+                    open_key_sink()
+                else:
+                    close_key_sink()
+                    hud.preview = True
+                    open_camera_window(hud)
+                    preview_opened_at = time.monotonic()
+                continue
             if not hud.preview:
                 if key in (ord("q"), 27):
                     break
@@ -640,6 +697,9 @@ def main() -> None:
                 hud.set_faces(face_id.list_names())
                 hud.faces_open = True
     finally:
+        scroll_pump.stop()
+        overlay.stop()
+        close_key_sink()
         presence.clear()
         release_mouse()
         set_cmd_state(False)

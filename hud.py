@@ -9,6 +9,7 @@ from mac_keys import display_bounds
 
 CAM_WINDOW = "Hand Control — tracker"
 RAIL_WINDOW = "Hand Control"
+KEYS_WINDOW = " "
 
 FEATURES = (
     ("pointer", "Pointer"),
@@ -40,7 +41,7 @@ RAIL_H = 148
 class CameraHud:
     def __init__(self) -> None:
         self.enabled = {key: True for key, _label in FEATURES}
-        self.preview = True
+        self.preview = False
         self.faces_open = False
         self.faces: list[str] = []
         self.faces_sel = 0
@@ -173,13 +174,44 @@ def _status_view(lines: list[str]) -> tuple[str, str, str, str]:
             hint = line
         elif line == "No hands in view":
             hint = hint or "No hands in view"
+        elif low.startswith("unknown face"):
+            hint = line
     if locked:
-        return "Locked", "Idle", meta, hint or "Look at the camera to unlock"
+        return "Locked", "Idle", meta, hint or "A known face unlocks"
     if face and face != "Unknown":
         return f"Hi, {face}"[:18], mode, meta, hint
     if face == "Unknown":
         return "New face", mode, meta, hint or "Open People to save this face"
     return "Live", mode, meta, hint
+
+
+def overlay_label(lines: list[str]) -> str:
+    """One-line fallback. Prefer overlay_copy for the desktop card."""
+    title, detail, _locked = overlay_copy(lines)
+    if detail:
+        return f"{title} · {detail}"
+    return title
+
+
+def overlay_copy(lines: list[str]) -> tuple[str, str, bool]:
+    """Title, subtitle, and lock flag for the centered overlay card."""
+    state, mode, _meta, hint = _status_view(lines)
+    if state == "Locked":
+        return "Locked", "", True
+    if hint.lower().startswith("unknown face"):
+        countdown = hint.replace("Unknown face — ", "").replace("Unknown face - ", "")
+        return countdown or "Locking", "", False
+    who = state.removeprefix("Hi, ").strip()
+    if who in ("", "Live"):
+        who = "Hand Control"
+    if who == "New face":
+        return "New face", "", False
+    if mode in ("Ready", "Idle", ""):
+        return who, "", False
+    return mode, "", False
+
+
+status_view = _status_view
 
 
 def _status_bar(frame, state: str, mode: str, meta: str) -> None:
@@ -373,9 +405,31 @@ def open_rail(hud: CameraHud) -> None:
 
 
 def open_camera_window(hud: CameraHud) -> None:
+    close_key_sink()
     cv2.namedWindow(CAM_WINDOW, cv2.WINDOW_NORMAL)
     cv2.setWindowTitle(CAM_WINDOW, "Hand Control")
     hud.attach_cam(CAM_WINDOW)
+
+
+def open_key_sink() -> None:
+    """Tiny off-screen window so C and Q still work in overlay mode."""
+    if window_open(KEYS_WINDOW):
+        return
+    cv2.namedWindow(KEYS_WINDOW, cv2.WINDOW_NORMAL)
+    cv2.resizeWindow(KEYS_WINDOW, 2, 2)
+    try:
+        cv2.moveWindow(KEYS_WINDOW, -120, -120)
+    except cv2.error:
+        pass
+
+
+def close_key_sink() -> None:
+    if not window_open(KEYS_WINDOW):
+        return
+    try:
+        cv2.destroyWindow(KEYS_WINDOW)
+    except cv2.error:
+        pass
 
 
 def window_open(name: str) -> bool:

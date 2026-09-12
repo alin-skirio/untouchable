@@ -44,6 +44,16 @@ def index_tip_px(hand_landmarks, width: float, height: float) -> tuple[float, fl
     return tip.x * width, tip.y * height
 
 
+def index_track_px(hand_landmarks, width: float, height: float) -> tuple[float, float]:
+    """Index point blended toward the DIP so camera tremor on the tip is quieter."""
+    lm = hand_landmarks.landmark
+    tip, dip = lm[INDEX_TIP], lm[INDEX_DIP]
+    return (
+        (0.62 * tip.x + 0.38 * dip.x) * width,
+        (0.62 * tip.y + 0.38 * dip.y) * height,
+    )
+
+
 def _point_to_segment(px: float, py: float, ax: float, ay: float, bx: float, by: float) -> float:
     dx, dy = bx - ax, by - ay
     length2 = dx * dx + dy * dy

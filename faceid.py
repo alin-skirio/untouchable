@@ -934,6 +934,23 @@ class FaceID:
             names.append(name)
         return names
 
+    def live_scene(self) -> tuple[list[str], int]:
+        """Known names and unidentified faces visible in the current frame."""
+        names: list[str] = []
+        seen: set[str] = set()
+        unknown = 0
+        for track in self._tracks.values():
+            if track.gone_frames > 0:
+                continue
+            if track.stable_name:
+                key = track.stable_name.lower()
+                if key not in seen:
+                    seen.add(key)
+                    names.append(track.stable_name)
+            else:
+                unknown += 1
+        return names, unknown
+
     def close(self) -> None:
         self._face_mesh.close()
 

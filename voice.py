@@ -257,8 +257,7 @@ async def run_realtime(key: str) -> None:
                 blob = hold_text
                 if not presence.unlocked():
                     print(
-                        "No recognized face in the camera. "
-                        "Look at the camera, then try again."
+                        "Commands are locked. A known face must unlock first."
                     )
                     return
                 ask_now = parse_desk_ask(blob)
@@ -314,7 +313,7 @@ async def run_realtime(key: str) -> None:
             elif not presence.unlocked():
                 result = {
                     "ok": False,
-                    "error": "No recognized face in the camera. Look at the camera, then try again.",
+                    "error": "Commands are locked. A known face must unlock first.",
                 }
                 print(f"Ignored tool (no face): {name}")
             elif name == "handoff_to_desk":
@@ -510,7 +509,7 @@ def run_stt_fallback(key: str) -> None:
             print("Shutting down the voice listener.")
             return
         if not presence.unlocked():
-            print("No recognized face in the camera. Look at the camera, then try again.")
+            print("Commands are locked. A known face must unlock first.")
             continue
         if is_simplify_command(text):
             from simplify import simplify_current_page
