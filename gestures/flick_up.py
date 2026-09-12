@@ -6,21 +6,27 @@ from collections import deque
 
 from .pose import FOUR_TIPS
 
-DEFAULT_RISE_PX = 20.0
-HISTORY_FRAMES = 8
-MIN_HISTORY = 3
-COOLDOWN_FRAMES = 12
+DEFAULT_RISE_PX = 12.0
+PALM_FRACTION = 0.3  # of a calibrated palm
+HISTORY_FRAMES = 12  # ~0.4s at 30fps, so a lazy flick still accumulates
+MIN_HISTORY = 2
+COOLDOWN_FRAMES = 8
+MIN_TIP_RATIO = 0.5  # slack for the worst-tracked tip, usually the pinky
 
 
 def rise_threshold_px(ref_palm_px: float | None, default_px: float = DEFAULT_RISE_PX) -> float:
-    """Half a calibrated palm, or the default until ⌘T sets a reference."""
+    """A fraction of a calibrated palm, or the default until ⌘T sets a reference."""
     if ref_palm_px and ref_palm_px > 0:
-        return ref_palm_px / 2.0
+        return ref_palm_px * PALM_FRACTION
     return default_px
 
 
 class FlickUp:
-    """Fires when every tracked fingertip has risen past the threshold in a short window.
+    """Fires when the fingertips as a group have risen past the threshold in a short window.
+
+    The average tip has to clear the threshold and every tip has to clear
+    ``min_tip_ratio`` of it, so the whole hand still has to travel but one
+    badly tracked finger cannot veto the flick.
 
     History is kept per hand label, so the left and right hands flick independently.
     """
@@ -30,10 +36,12 @@ class FlickUp:
         history_frames: int = HISTORY_FRAMES,
         cooldown_frames: int = COOLDOWN_FRAMES,
         tips=FOUR_TIPS,
+        min_tip_ratio: float = MIN_TIP_RATIO,
     ):
         self.history_frames = history_frames
         self.cooldown_frames = cooldown_frames
         self.tips = tuple(tips)
+        self.min_tip_ratio = min_tip_ratio
         self.last_rise = 0.0
         self._history: dict[str, deque[tuple[float, ...]]] = {}
         self._cooldown: dict[str, int] = {}
@@ -68,12 +76,12 @@ class FlickUp:
         fired = False
         if len(history) >= MIN_HISTORY:
             # Image y grows downward, so a rise is the climb from each tip's recent low.
-            rise = min(
+            rises = [
                 max(frame[i] for frame in history) - current[i]
                 for i in range(len(self.tips))
-            )
-            self.last_rise = rise
-            if rise >= threshold_px:
+            ]
+            self.last_rise = sum(rises) / len(rises)
+            if self.last_rise >= threshold_px and min(rises) >= threshold_px * self.min_tip_ratio:
                 fired = True
                 self._cooldown[label] = self.cooldown_frames
                 history.clear()

@@ -18,7 +18,7 @@ Pinch your **right** thumb, index, and middle fingertips together to send **⌘T
 
 Hold both hands flat and **perpendicular** so they form a **T** — one hand's palm resting against the other hand's fingertips, like a timeout signal — to open TikTok and enter **TikTok mode**. If the TikTok app isn't installed, it opens tiktok.com instead.
 
-In TikTok mode, **flick all your fingertips up** to jump to the next video. The flick has to cover **half a calibrated palm**, which is `20px` until **⌘T** sets a desk reference. Either hand works, and each is tracked separately. Make the **T** again to close the tab and leave the mode. The T fires once per pose, so drop your hands before making another.
+In TikTok mode, **flick all your fingertips up** to jump to the next video. The flick has to cover **30% of a calibrated palm**, which is `12px` until **⌘T** sets a desk reference, and it can build up over about a third of a second so a lazy flick still counts. Either hand works, and each is tracked separately. To retune, edit `DEFAULT_RISE_PX`, `PALM_FRACTION`, and `HISTORY_FRAMES` in `gestures/flick_up.py`. Make the **T** again to close the tab and leave the mode. The T fires once per pose, so drop your hands before making another.
 
 Face recognition (OpenCV SFace embeddings): press **A** to add a named profile (saved under `profiles/`), **L** to list profiles. First run downloads YuNet + SFace models into `models/`. Re-enroll after encoder upgrades. Press **Q** or **Esc** in the preview to quit, or **Ctrl+C** in the terminal.
 
