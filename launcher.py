@@ -9,6 +9,8 @@ from __future__ import annotations
 import subprocess
 import sys
 
+from computer import key_combo
+
 TIKTOK_APP = "TikTok"
 TIKTOK_URL = "https://www.tiktok.com"
 
@@ -39,3 +41,17 @@ def open_tiktok() -> bool:
         return True
     print("Could not open TikTok.")
     return False
+
+
+def next_tiktok_video() -> bool:
+    """Down arrow advances to the next video."""
+    if sys.platform != "darwin":
+        return False
+    return bool(key_combo(["down"]).get("ok"))
+
+
+def close_tiktok_tab() -> bool:
+    """⌘W closes the TikTok tab or window."""
+    if sys.platform != "darwin":
+        return False
+    return bool(key_combo(["command", "w"]).get("ok"))

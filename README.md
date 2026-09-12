@@ -16,7 +16,9 @@ Hold one or both hands in front of the camera. Each hand gets a skeleton and a m
 
 Pinch your **right** thumb, index, and middle fingertips together to send **⌘Tab**. Open those fingers before pinching again. The shortcut is sent system-wide, so it still works if the preview is in the background or closed.
 
-Hold both hands flat and **perpendicular** so they form a **T** — one hand's palm resting against the other hand's fingertips, like a timeout signal — to **open TikTok**. It fires once per T; drop the pose before making another. If the TikTok app isn't installed, it opens tiktok.com instead.
+Hold both hands flat and **perpendicular** so they form a **T** — one hand's palm resting against the other hand's fingertips, like a timeout signal — to open TikTok and enter **TikTok mode**. If the TikTok app isn't installed, it opens tiktok.com instead.
+
+In TikTok mode, **flick all your fingertips up** to jump to the next video. The flick has to cover **half a calibrated palm**, which is `20px` until **⌘T** sets a desk reference. Either hand works, and each is tracked separately. Make the **T** again to close the tab and leave the mode. The T fires once per pose, so drop your hands before making another.
 
 Face recognition (OpenCV SFace embeddings): press **A** to add a named profile (saved under `profiles/`), **L** to list profiles. First run downloads YuNet + SFace models into `models/`. Re-enroll after encoder upgrades. Press **Q** or **Esc** in the preview to quit, or **Ctrl+C** in the terminal.
 
