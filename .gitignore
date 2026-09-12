@@ -21,4 +21,5 @@ handoffs/*.png
 .overlay.txt
 .overlay.txt.tmp
 .overlay.stop
+.voice.json
 

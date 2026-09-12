@@ -1,0 +1,143 @@
+// Persistent transparent HUD. argv[0] is the overlay URL (http://127.0.0.1:port/).
+// Chrome window is click-through except during the intro frost.
+// A small toggle window stays interactive so H's on-screen twin still works.
+
+ObjC.import("Cocoa");
+ObjC.import("WebKit");
+
+function makeWeb(frame, url) {
+  var config = $.WKWebViewConfiguration.alloc.init;
+  var web = $.WKWebView.alloc.initWithFrameConfiguration(frame, config);
+  web.setValueForKey(false, "opaque");
+  try {
+    web.setValueForKey($.NSColor.clearColor, "backgroundColor");
+  } catch (err) {}
+  try {
+    web.setValueForKey(false, "drawsBackground");
+  } catch (err) {}
+  web.loadRequest($.NSURLRequest.requestWithURL($.NSURL.URLWithString(url)));
+  return web;
+}
+
+function makePanel(rect, level) {
+  var style = $.NSWindowStyleMaskBorderless;
+  var win = $.NSPanel.alloc.initWithContentRectStyleMaskBackingDefer(
+    rect,
+    style,
+    $.NSBackingStoreBuffered,
+    false
+  );
+  win.setOpaque(false);
+  win.setBackgroundColor($.NSColor.clearColor);
+  win.setLevel(level);
+  win.setHasShadow(false);
+  win.setHidesOnDeactivate(false);
+  win.setFloatingPanel(true);
+  win.setBecomesKeyOnlyIfNeeded(true);
+  win.setCollectionBehavior(
+    $.NSWindowCollectionBehaviorCanJoinAllSpaces |
+      $.NSWindowCollectionBehaviorFullScreenAuxiliary |
+      $.NSWindowCollectionBehaviorStationary |
+      $.NSWindowCollectionBehaviorIgnoresCycle
+  );
+  win.setAnimationBehavior($.NSWindowAnimationBehaviorNone);
+  return win;
+}
+
+function fetchJSON(url) {
+  var req = $.NSMutableURLRequest.requestWithURL($.NSURL.URLWithString(url));
+  req.setCachePolicy($.NSURLRequestReloadIgnoringLocalCacheData);
+  req.setTimeoutInterval(0.4);
+  var error = $();
+  var data = $.NSURLConnection.sendSynchronousRequestReturningResponseError(req, null, error);
+  if (!data) return null;
+  var text = ObjC.unwrap($.NSString.alloc.initWithDataEncoding(data, $.NSUTF8StringEncoding));
+  try {
+    return JSON.parse(text);
+  } catch (err) {
+    return null;
+  }
+}
+
+function run(argv) {
+  if (!argv || argv.length < 1) return;
+  var base = argv[0];
+  if (!base) return;
+
+  var app = $.NSApplication.sharedApplication;
+  app.setActivationPolicy($.NSApplicationActivationPolicyAccessory);
+
+  var screen = $.NSScreen.mainScreen.frame;
+  var chrome = makePanel(screen, 25);
+  var frost = $.NSVisualEffectView.alloc.initWithFrame(screen);
+  frost.setMaterial(10);
+  frost.setState(1);
+  frost.setBlendingMode(0);
+  frost.setHidden(true);
+
+  var chromeWeb = makeWeb(screen, base + "?layer=chrome");
+  var stack = $.NSView.alloc.initWithFrame(screen);
+  stack.setWantsLayer(true);
+  stack.addSubview(frost);
+  stack.addSubview(chromeWeb);
+  chrome.setContentView(stack);
+  chrome.setIgnoresMouseEvents(true);
+  chrome.orderFrontRegardless();
+
+  var btnW = 220;
+  var btnH = 44;
+  var btnRect = $.NSMakeRect(
+    screen.origin.x + screen.size.width - btnW - 16,
+    screen.origin.y + 14,
+    btnW,
+    btnH
+  );
+  var toggle = makePanel(btnRect, 26);
+  var toggleWeb = makeWeb($.NSMakeRect(0, 0, btnW, btnH), base + "?layer=toggle");
+  toggle.setContentView(toggleWeb);
+  toggle.setIgnoresMouseEvents(false);
+  toggle.orderFrontRegardless();
+
+  $.NSEvent.addLocalMonitorForEventsMatchingMaskHandler($.NSEventMaskKeyDown, function (event) {
+    var chars = ObjC.unwrap(event.charactersIgnoringModifiers) || "";
+    var key = event.keyCode;
+    if (chars === "h" || chars === "H") {
+      postEvent(base, "toggle_hud");
+    }
+    if (key === 53) {
+      postEvent(base, "dismiss_intro");
+    }
+    return event;
+  });
+
+  var running = true;
+  while (running) {
+    var state = fetchJSON(base + "state.json");
+    if (state && state.quit) {
+      running = false;
+      break;
+    }
+    var intro = !!(state && state.intro);
+    var hud = !!(state && state.hud);
+    var locked = !!(state && state.mode === "locked");
+    frost.setHidden(!intro);
+    chrome.setIgnoresMouseEvents(!intro);
+    chrome.setIsVisible(intro || hud || locked);
+    toggle.setIsVisible(!intro);
+    $.NSRunLoop.currentRunLoop.runUntilDate($.NSDate.dateWithTimeIntervalSinceNow(0.12));
+  }
+
+  chrome.orderOut(null);
+  toggle.orderOut(null);
+  chrome.close();
+  toggle.close();
+}
+
+function postEvent(base, type) {
+  var req = $.NSMutableURLRequest.requestWithURL($.NSURL.URLWithString(base + "event"));
+  req.setHTTPMethod("POST");
+  req.setValueForHTTPHeaderField("application/json", "Content-Type");
+  var body = $.NSString.stringWithString(JSON.stringify({ type: type }));
+  req.setHTTPBody(body.dataUsingEncoding($.NSUTF8StringEncoding));
+  $.NSURLConnection.sendSynchronousRequestReturningResponseError(req, null, $());
+}

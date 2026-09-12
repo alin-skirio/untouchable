@@ -30,7 +30,26 @@ from handoff import handoff_to_desk, parse_desk_ask
 import presence
 
 ROOT = Path(__file__).resolve().parent
+VOICE_PATH = ROOT / ".voice.json"
 load_dotenv(ROOT / ".env", override=True)
+
+
+def publish_listening(listening: bool = True) -> None:
+    """Tiny pulse so the desk HUD can show Voice listening. Does not change commands."""
+    try:
+        VOICE_PATH.write_text(
+            json.dumps({"listening": bool(listening), "at": time.time()}),
+            encoding="utf-8",
+        )
+    except OSError:
+        pass
+
+
+def clear_listening() -> None:
+    try:
+        VOICE_PATH.unlink(missing_ok=True)
+    except OSError:
+        pass
 
 WAKE_PHRASE = "hey grok"
 SAMPLE_RATE = 24000
@@ -188,6 +207,7 @@ async def run_realtime(key: str) -> None:
         'For Desk, finish the ask after "and" — I wait before sending. '
         'Say "hey grok, shut down" to quit.'
     )
+    publish_listening(True)
 
     async with _ws_connect(headers) as ws:
         await ws.send(
@@ -270,7 +290,12 @@ async def run_realtime(key: str) -> None:
         signal.signal(signal.SIGINT, request_stop)
 
         async def sender() -> None:
+            last_pulse = 0.0
             while not stop.is_set():
+                now = time.monotonic()
+                if now - last_pulse > 1.2:
+                    publish_listening(True)
+                    last_pulse = now
                 try:
                     frames = await asyncio.wait_for(audio_q.get(), timeout=0.25)
                 except asyncio.TimeoutError:
@@ -495,6 +520,7 @@ def run_stt_fallback(key: str) -> None:
         'Falling back to Grok speech-to-text plus tools. Say "hey grok" then a command.'
     )
     print('Say "hey grok, shut down" to quit.')
+    publish_listening(True)
     while True:
         audio = _record_utterance()
         if audio.size == 0:
@@ -547,3 +573,5 @@ if __name__ == "__main__":
     except Exception as exc:
         print(f"Voice loop failed: {exc}")
         sys.exit(1)
+    finally:
+        clear_listening()
