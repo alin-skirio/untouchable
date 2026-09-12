@@ -10,6 +10,8 @@ from typing import Optional
 
 kVK_Tab = 0x30
 kVK_ANSI_T = 0x11
+kVK_ANSI_Minus = 0x1B
+kVK_ANSI_KeypadMinus = 0x4E
 kVK_Command = 0x37
 kVK_PageUp = 0x74
 kCGHIDEventTap = 0
@@ -67,7 +69,7 @@ def _is_macos() -> bool:
         return True
     if not _macos_warned:
         _macos_warned = True
-        print("Mouse and ⌘T reference hotkey require macOS (Quartz/CoreGraphics).")
+        print("Mouse and ⌘- reference hotkey require macOS (Quartz/CoreGraphics).")
     return False
 
 
@@ -350,7 +352,7 @@ def release_mouse() -> None:
 
 
 class CommandTMonitor:
-    """Global Quartz listen tap for ⌘T. Consumes the event while running."""
+    """Global Quartz listen tap for ⌘-. Consumes the event while running."""
 
     def __init__(self):
         self._flag = threading.Event()
@@ -364,7 +366,7 @@ class CommandTMonitor:
     def start(self) -> None:
         if not _is_macos() or self._thread is not None:
             return
-        self._thread = threading.Thread(target=self._run, name="cmd-t-tap", daemon=True)
+        self._thread = threading.Thread(target=self._run, name="cmd-minus-tap", daemon=True)
         self._thread.start()
 
     def stop(self) -> None:
@@ -395,7 +397,7 @@ class CommandTMonitor:
             flags = cg.CGEventGetFlags(event)
             extras = kCGEventFlagMaskShift | kCGEventFlagMaskControl | kCGEventFlagMaskAlternate
             if (
-                keycode == kVK_ANSI_T
+                keycode in (kVK_ANSI_Minus, kVK_ANSI_KeypadMinus)
                 and (flags & kCGEventFlagMaskCommand)
                 and not (flags & extras)
             ):
@@ -420,14 +422,14 @@ class CommandTMonitor:
             )
             if not tap:
                 print(
-                    "Could not listen for ⌘T. Enable Accessibility for Cursor or Terminal "
+                    "Could not listen for ⌘-. Enable Accessibility for Cursor or Terminal "
                     "(System Settings → Privacy & Security → Accessibility)."
                 )
                 return
             self._tap = tap
             source = cf.CFMachPortCreateRunLoopSource(None, tap, 0)
             if not source:
-                print("Could not attach the ⌘T event tap to a run loop.")
+                print("Could not attach the ⌘- event tap to a run loop.")
                 return
             self._source = source
             loop = cf.CFRunLoopGetCurrent()
@@ -437,7 +439,7 @@ class CommandTMonitor:
             self._runloop = loop
             cf.CFRunLoopRun()
         except Exception as exc:
-            print(f"⌘T hotkey listener failed: {exc}")
+            print(f"⌘- hotkey listener failed: {exc}")
 
 
 def start_cmd_t_monitor() -> CommandTMonitor:

@@ -44,7 +44,6 @@ VOICE_INSTRUCTIONS = (
     + '"hey grok". If it does not, do not call tools. '
     + "If they ask to simplify this page or make it easier to read, call simplify_page. "
     + "If the user says hey grok shut down, do not control the Mac; the listener will exit."
-    + "If they ask to simplify this page or make it easier to read, call simplify_page."
 )
 
 
@@ -97,21 +96,6 @@ def is_exit_command(text: str) -> bool:
         "exit",
         "stop",
     }
-def is_simplify_command(text: str) -> bool:
-    if not contains_wake(text):
-        return False
-    rest = re.sub(r"[^a-z0-9\s]", " ", strip_wake(text).lower())
-    rest = re.sub(r"\s+", " ", rest).strip()
-    return any(
-        needle in rest
-        for needle in (
-            "simplify this",
-            "simplify the page",
-            "simplify this page",
-            "make this easier",
-            "simplify",
-        )
-    )
 
 
 def _api_key() -> str:
@@ -416,12 +400,6 @@ def run_stt_fallback(key: str) -> None:
         if not presence.unlocked():
             print("No recognized face in the camera. Look at the camera, then try again.")
             continue
-        if is_simplify_command(text):
-            from simplify import simplify_current_page
-
-            command = strip_wake(text) or "Simplify this page."
-            print("Simplifying the current browser page…")
-            result = simplify_current_page(command)
         if is_simplify_command(text):
             from simplify import simplify_current_page
 

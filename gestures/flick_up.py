@@ -15,7 +15,7 @@ MIN_TIP_RATIO = 0.5  # slack for the worst-tracked tip, usually the pinky
 
 
 def rise_threshold_px(ref_palm_px: float | None, default_px: float = DEFAULT_RISE_PX) -> float:
-    """A fraction of a calibrated palm, or the default until ⌘T sets a reference."""
+    """A fraction of a calibrated palm, or the default until ⌘- sets a reference."""
     if ref_palm_px and ref_palm_px > 0:
         return ref_palm_px * PALM_FRACTION
     return default_px

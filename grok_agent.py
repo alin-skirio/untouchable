@@ -23,7 +23,6 @@ Prefer shortcuts such as command+t, command+l, command+f, command+tab.
 If the user wants a new Apple Note, call make_new_note. Do not use Spotlight.
 Call get_context when you are unsure what is focused.
 If they ask to simplify this, make this easier to read, or remake the current
-page for hand control, call simplify_page and do not click around the site.
 page, call simplify_page and do not click around the site.
 Do not invent site-specific tools. After actions, say briefly what you did.
 """
@@ -144,8 +143,6 @@ TOOLS = [
         "type": "function",
         "name": "simplify_page",
         "description": (
-            "Read the current Zen, Safari, or Chrome page, rewrite it into a large-button "
-            "local webpage for hand-pointer control, and open that page."
             "Read the current Zen, Safari, or Chrome page and generate a Grok Imagine "
             "diagram that simplifies it (recipe steps, key facts, and similar)."
         ),

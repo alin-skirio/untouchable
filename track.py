@@ -16,14 +16,14 @@ into the fist to go faster; release it to return to the normal speed.
 
 Point index+middle+thumb with ring+pinky curled to move the cursor — but only after
 open hand → fist → that pose. Press S to warp the cursor onto the index tip.
-⌘T captures a desk-distance reference; the Desk slider is base sensitivity.
+⌘- captures a desk-distance reference; the Desk slider is base sensitivity.
 Hold right thumb+ring+pinky down, keep index+middle up and together,
 and swipe up rapidly to scroll down dynamically based on swipe severity.
 
 Hold both hands flat and perpendicular so they form a T (one hand's palm
 against the other's fingertips) to open TikTok and enter TikTok mode. In
 that mode, flicking all fingertips up by a fraction of a calibrated palm
-(12px until ⌘T sets a reference) goes to the next video. Make the T again
+(12px until ⌘- sets a reference) goes to the next video. Make the T again
 to close the tab and leave the mode.
 
 Face recognition runs on the same camera feed. Press A to add a named
@@ -61,9 +61,8 @@ from hud import (
     open_rail,
     window_open,
 )
-from launcher import open_tiktok
-import presence
 from launcher import close_tiktok_tab, next_tiktok_video, open_tiktok
+import presence
 from mac_keys import (
     async_cmd,
     async_tap_tab,
@@ -443,10 +442,8 @@ def main() -> None:
                 scroll_down.reset()
                 scroller.reset()
 
-            # Two flat hands held perpendicular (a "T") open TikTok.
-            if not armed or pointer.engaged or not hud.on("t_pose"):
             # Two flat hands held perpendicular (a "T") toggle TikTok mode.
-            if pointer.engaged:
+            if not armed or pointer.engaged or not hud.on("t_pose"):
                 t_pose.reset()
             elif t_pose.update(pose_hands, (width, height)):
                 flick.reset()
@@ -458,7 +455,6 @@ def main() -> None:
                     tiktok_mode = True
                     threading.Thread(target=open_tiktok, daemon=True).start()
                     last_action_msg = "T pose → TikTok mode on"
-                # An open hand after a fist also looks like a flick scroll.
                 scroller.reset()
                 scroll_down.reset()
                 last_action_at = time.monotonic()
