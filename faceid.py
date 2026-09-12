@@ -1,13 +1,10 @@
-"""Live webcam face recognition with a local profile database.
+"""Local face recognition profiles for the hand-control tracker.
 
-Uses MediaPipe Face Mesh landmark geometry for recognition.
-Press A to enroll a named profile (saved in profiles.db).
-Press L to list profiles. Press Q or Esc to quit.
+Stores named face encodings in profiles.db and matches live Face Mesh landmarks.
 """
 
 from __future__ import annotations
 
-import argparse
 import re
 import sqlite3
 import subprocess
@@ -108,54 +105,6 @@ def open_camera(preferred: int | None = None) -> cv2.VideoCapture:
     )
 
 
-def connect_db(path: Path = DB_PATH) -> sqlite3.Connection:
-    conn = sqlite3.connect(str(path))
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS profiles (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL UNIQUE COLLATE NOCASE,
-            encoding BLOB NOT NULL,
-            created_at REAL NOT NULL
-        )
-        """
-    )
-    conn.commit()
-    return conn
-
-
-def encoding_to_blob(encoding: np.ndarray) -> bytes:
-    return np.asarray(encoding, dtype=np.float32).tobytes()
-
-
-def blob_to_encoding(blob: bytes) -> np.ndarray:
-    return np.frombuffer(blob, dtype=np.float32).copy()
-
-
-def load_profiles(conn: sqlite3.Connection) -> list[tuple[str, np.ndarray]]:
-    rows = conn.execute("SELECT name, encoding FROM profiles ORDER BY name").fetchall()
-    return [(name, blob_to_encoding(blob)) for name, blob in rows]
-
-
-def save_profile(conn: sqlite3.Connection, name: str, encoding: np.ndarray) -> None:
-    conn.execute(
-        """
-        INSERT INTO profiles (name, encoding, created_at)
-        VALUES (?, ?, ?)
-        ON CONFLICT(name) DO UPDATE SET
-            encoding = excluded.encoding,
-            created_at = excluded.created_at
-        """,
-        (name.strip(), encoding_to_blob(encoding), time.time()),
-    )
-    conn.commit()
-
-
-def list_profiles(conn: sqlite3.Connection) -> list[str]:
-    rows = conn.execute("SELECT name FROM profiles ORDER BY name").fetchall()
-    return [row[0] for row in rows]
-
-
 def face_encoding(landmarks) -> np.ndarray | None:
     """Build a pose-normalized encoding from Face Mesh landmarks."""
     pts = np.array([(lm.x, lm.y, lm.z) for lm in landmarks.landmark], dtype=np.float32)
@@ -181,6 +130,16 @@ def face_encoding(landmarks) -> np.ndarray | None:
     return aligned.reshape(-1)
 
 
+def landmark_bbox(landmarks, width: int, height: int, pad: float = 0.08):
+    xs = [lm.x for lm in landmarks.landmark]
+    ys = [lm.y for lm in landmarks.landmark]
+    x1 = max(0, int((min(xs) - pad) * width))
+    y1 = max(0, int((min(ys) - pad) * height))
+    x2 = min(width - 1, int((max(xs) + pad) * width))
+    y2 = min(height - 1, int((max(ys) + pad) * height))
+    return x1, y1, x2, y2
+
+
 def match_profile(
     encoding: np.ndarray,
     profiles: list[tuple[str, np.ndarray]],
@@ -204,212 +163,179 @@ def match_profile(
     return best_name, best_dist
 
 
-def landmark_bbox(landmarks, width: int, height: int, pad: float = 0.08):
-    xs = [lm.x for lm in landmarks.landmark]
-    ys = [lm.y for lm in landmarks.landmark]
-    x1 = max(0, int((min(xs) - pad) * width))
-    y1 = max(0, int((min(ys) - pad) * height))
-    x2 = min(width - 1, int((max(xs) + pad) * width))
-    y2 = min(height - 1, int((max(ys) + pad) * height))
-    return x1, y1, x2, y2
+class FaceID:
+    """Local named face profiles + live Face Mesh recognition."""
 
+    def __init__(self, db_path: Path = DB_PATH):
+        self.db_path = Path(db_path)
+        self.conn = sqlite3.connect(str(self.db_path))
+        self.conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS profiles (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+                encoding BLOB NOT NULL,
+                created_at REAL NOT NULL
+            )
+            """
+        )
+        self.conn.commit()
+        self.profiles: list[tuple[str, np.ndarray]] = []
+        self.reload()
 
-def draw_hud(frame, lines: list[str]) -> None:
-    y = 28
-    for line in lines:
-        cv2.putText(
-            frame,
-            line,
-            (16, y),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.65,
-            (20, 20, 20),
-            3,
-            cv2.LINE_AA,
+        self._face_mesh = mp.solutions.face_mesh.FaceMesh(
+            max_num_faces=2,
+            refine_landmarks=True,
+            min_detection_confidence=0.6,
+            min_tracking_confidence=0.6,
         )
-        cv2.putText(
-            frame,
-            line,
-            (16, y),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.65,
-            (240, 240, 240),
-            1,
-            cv2.LINE_AA,
+
+        self.enrolling = False
+        self._enroll_name: str | None = None
+        self._enroll_samples: list[np.ndarray] = []
+        self._enroll_deadline = 0.0
+
+    def reload(self) -> None:
+        rows = self.conn.execute(
+            "SELECT name, encoding FROM profiles ORDER BY name"
+        ).fetchall()
+        self.profiles = [
+            (name, np.frombuffer(blob, dtype=np.float32).copy()) for name, blob in rows
+        ]
+
+    def list_names(self) -> list[str]:
+        return [name for name, _ in self.profiles]
+
+    def close(self) -> None:
+        self._face_mesh.close()
+        self.conn.close()
+
+    def begin_enroll(self, name: str) -> None:
+        name = name.strip()
+        if not name:
+            print("Enrollment cancelled (empty name).")
+            return
+        self.enrolling = True
+        self._enroll_name = name
+        self._enroll_samples = []
+        self._enroll_deadline = time.monotonic() + 12.0
+        print(f"Enrolling '{name}' — look at the camera ({ENROLL_SAMPLES} samples)...")
+
+    def cancel_enroll(self) -> None:
+        if self.enrolling:
+            print("Enrollment cancelled.")
+        self.enrolling = False
+        self._enroll_name = None
+        self._enroll_samples = []
+
+    def _finish_enroll(self) -> None:
+        name = self._enroll_name or "unknown"
+        samples = self._enroll_samples
+        self.enrolling = False
+        self._enroll_name = None
+        self._enroll_samples = []
+
+        if len(samples) < max(5, ENROLL_SAMPLES // 3):
+            print(f"Not enough face samples ({len(samples)}). Try again.")
+            return
+
+        mean_encoding = np.mean(np.stack(samples, axis=0), axis=0).astype(np.float32)
+        self.conn.execute(
+            """
+            INSERT INTO profiles (name, encoding, created_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(name) DO UPDATE SET
+                encoding = excluded.encoding,
+                created_at = excluded.created_at
+            """,
+            (name, mean_encoding.tobytes(), time.time()),
         )
-        y += 26
+        self.conn.commit()
+        self.reload()
+        print(f"Saved profile '{name}' ({len(samples)} samples). {len(self.profiles)} total.")
+
+    def process(self, frame, rgb) -> list[str]:
+        """Run face recognition on the shared camera frame. Mutates frame for overlays.
+
+        Returns short status lines for the tracker HUD.
+        """
+        height, width = frame.shape[:2]
+        results = self._face_mesh.process(rgb)
+        status: list[str] = []
+
+        if self.enrolling:
+            if time.monotonic() > self._enroll_deadline:
+                self._finish_enroll()
+            elif results.multi_face_landmarks:
+                face = results.multi_face_landmarks[0]
+                encoding = face_encoding(face)
+                if encoding is not None:
+                    self._enroll_samples.append(encoding)
+                x1, y1, x2, y2 = landmark_bbox(face, width, height)
+                cv2.rectangle(frame, (x1, y1), (x2, y2), (40, 200, 120), 2)
+                label = (
+                    f"Enrolling {self._enroll_name}: "
+                    f"{len(self._enroll_samples)}/{ENROLL_SAMPLES}"
+                )
+                cv2.putText(
+                    frame,
+                    label,
+                    (x1, max(24, y1 - 10)),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.7,
+                    (40, 200, 120),
+                    2,
+                    cv2.LINE_AA,
+                )
+                status.append(label)
+                if len(self._enroll_samples) >= ENROLL_SAMPLES:
+                    self._finish_enroll()
+            else:
+                status.append(
+                    f"Enrolling {self._enroll_name}: face not found "
+                    f"({len(self._enroll_samples)}/{ENROLL_SAMPLES})"
+                )
+            return status
+
+        if not results.multi_face_landmarks:
+            return status
+
+        for face in results.multi_face_landmarks:
+            encoding = face_encoding(face)
+            x1, y1, x2, y2 = landmark_bbox(face, width, height)
+            name, dist = (
+                match_profile(encoding, self.profiles)
+                if encoding is not None
+                else (None, float("inf"))
+            )
+            if name:
+                color = (40, 200, 120)
+                label = name
+                status.append(f"Face: {name}")
+            else:
+                color = (40, 180, 255)
+                label = "Unknown"
+                status.append("Face: Unknown")
+
+            cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+            cv2.putText(
+                frame,
+                label,
+                (x1, max(24, y1 - 10)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.75,
+                color,
+                2,
+                cv2.LINE_AA,
+            )
+
+        return status
 
 
 def prompt_name() -> str | None:
-    print("\nAdd profile")
+    print("\nAdd face profile")
     try:
         name = input("Enter a name for this face (empty to cancel): ").strip()
     except EOFError:
         return None
     return name or None
-
-
-def enroll_face(
-    face_mesh,
-    cap: cv2.VideoCapture,
-    conn: sqlite3.Connection,
-    window: str,
-) -> list[tuple[str, np.ndarray]]:
-    name = prompt_name()
-    if not name:
-        print("Enrollment cancelled.")
-        return load_profiles(conn)
-
-    print(f"Hold still and look at the camera. Capturing {ENROLL_SAMPLES} samples for '{name}'...")
-    samples: list[np.ndarray] = []
-    deadline = time.monotonic() + 12.0
-
-    while len(samples) < ENROLL_SAMPLES and time.monotonic() < deadline:
-        ok, frame = cap.read()
-        if not ok:
-            break
-        frame = cv2.flip(frame, 1)
-        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        results = face_mesh.process(rgb)
-        height, width = frame.shape[:2]
-
-        if results.multi_face_landmarks:
-            face = results.multi_face_landmarks[0]
-            encoding = face_encoding(face)
-            if encoding is not None:
-                samples.append(encoding)
-            x1, y1, x2, y2 = landmark_bbox(face, width, height)
-            cv2.rectangle(frame, (x1, y1), (x2, y2), (40, 200, 120), 2)
-            label = f"Enrolling {name}: {len(samples)}/{ENROLL_SAMPLES}"
-        else:
-            label = f"Enrolling {name}: face not found ({len(samples)}/{ENROLL_SAMPLES})"
-
-        draw_hud(frame, [label, "Look at the camera"])
-        cv2.imshow(window, frame)
-        if cv2.waitKey(1) & 0xFF in (ord("q"), 27):
-            print("Enrollment interrupted.")
-            return load_profiles(conn)
-
-    if len(samples) < max(5, ENROLL_SAMPLES // 3):
-        print(f"Not enough face samples ({len(samples)}). Try again with better lighting.")
-        return load_profiles(conn)
-
-    mean_encoding = np.mean(np.stack(samples, axis=0), axis=0).astype(np.float32)
-    save_profile(conn, name, mean_encoding)
-    profiles = load_profiles(conn)
-    print(f"Saved profile '{name}' ({len(samples)} samples). {len(profiles)} profile(s) total.")
-    return profiles
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Local Face ID with named profiles.")
-    parser.add_argument(
-        "--db",
-        type=Path,
-        default=DB_PATH,
-        help=f"SQLite profile database path (default: {DB_PATH.name})",
-    )
-    parser.add_argument(
-        "--camera",
-        type=int,
-        default=None,
-        metavar="N",
-        help="Force camera index N",
-    )
-    args = parser.parse_args()
-
-    conn = connect_db(args.db)
-    profiles = load_profiles(conn)
-    print(f"Loaded {len(profiles)} profile(s) from {args.db}")
-    if profiles:
-        print("Profiles: " + ", ".join(name for name, _ in profiles))
-    print("Controls: A = add profile, L = list profiles, Q/Esc = quit")
-
-    cap = open_camera(preferred=args.camera)
-    window = "Face ID"
-    cv2.namedWindow(window, cv2.WINDOW_NORMAL)
-
-    mp_face_mesh = mp.solutions.face_mesh
-    face_mesh = mp_face_mesh.FaceMesh(
-        max_num_faces=3,
-        refine_landmarks=True,
-        min_detection_confidence=0.6,
-        min_tracking_confidence=0.6,
-    )
-
-    try:
-        while True:
-            ok, frame = cap.read()
-            if not ok:
-                print("Camera frame grab failed.")
-                break
-
-            frame = cv2.flip(frame, 1)
-            height, width = frame.shape[:2]
-            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            results = face_mesh.process(rgb)
-
-            status = [
-                f"Profiles: {len(profiles)}",
-                "A add  |  L list  |  Q quit",
-            ]
-
-            if results.multi_face_landmarks:
-                for face in results.multi_face_landmarks:
-                    encoding = face_encoding(face)
-                    x1, y1, x2, y2 = landmark_bbox(face, width, height)
-                    name, dist = (
-                        match_profile(encoding, profiles)
-                        if encoding is not None
-                        else (None, float("inf"))
-                    )
-                    if name:
-                        color = (40, 200, 120)
-                        label = name
-                        status.append(f"Match: {name} ({dist:.3f})")
-                    else:
-                        color = (40, 180, 255)
-                        label = "Unknown"
-                        status.append("Unknown face")
-
-                    cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-                    cv2.putText(
-                        frame,
-                        label,
-                        (x1, max(24, y1 - 10)),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.8,
-                        color,
-                        2,
-                        cv2.LINE_AA,
-                    )
-            else:
-                status.append("No face in view")
-
-            draw_hud(frame, status)
-            cv2.imshow(window, frame)
-
-            visible = cv2.getWindowProperty(window, cv2.WND_PROP_VISIBLE)
-            if visible < 1:
-                break
-
-            key = cv2.waitKey(1) & 0xFF
-            if key in (ord("q"), 27):
-                break
-            if key in (ord("a"), ord("A")):
-                profiles = enroll_face(face_mesh, cap, conn, window)
-            elif key in (ord("l"), ord("L")):
-                names = list_profiles(conn)
-                if names:
-                    print("Saved profiles: " + ", ".join(names))
-                else:
-                    print("No profiles saved yet. Press A to add one.")
-    finally:
-        face_mesh.close()
-        conn.close()
-        cap.release()
-        cv2.destroyAllWindows()
-
-
-if __name__ == "__main__":
-    main()

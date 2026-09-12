@@ -1,4 +1,4 @@
-"""Live webcam preview with MediaPipe hand landmarks.
+"""Live webcam preview with MediaPipe hand landmarks and face profiles.
 
 Hold one or both hands in view. The trail follows a fingertip on each hand.
 Curl exactly one finger to move that hand's trail onto that fingertip.
@@ -8,8 +8,11 @@ Pinch right thumb+index+middle to start app switching (holds ⌘).
 Flap your index finger up and down while holding thumb+middle to send Tab.
 Release thumb+middle to select the active application.
 
-Hold right thumb+ring+pinky down, keep index+middle up and together, 
+Hold right thumb+ring+pinky down, keep index+middle up and together,
 and swipe up rapidly to scroll down dynamically based on swipe severity.
+
+Face recognition runs on the same camera feed. Press A to add a named
+profile (saved in profiles.db), L to list profiles.
 
 Close the preview or use --no-preview; Ctrl+C to quit.
 """
@@ -19,13 +22,14 @@ from __future__ import annotations
 import argparse
 import math
 import signal
-import time
 import threading
+import time
 from collections import deque
 
 import cv2
 import mediapipe as mp
 
+from faceid import FaceID, open_camera, prompt_name
 from gestures.app_switcher import AppSwitcher
 from gestures.swipe_scroller import SwipeScroller
 from mac_keys import async_cmd, async_tap_tab, set_cmd_state, smooth_scroll
@@ -52,29 +56,6 @@ HAND_COLORS = {
     "Right": (40, 180, 255),
 }
 DEFAULT_COLOR = (0, 200, 255)
-
-
-def open_camera(preferred: int | None = None) -> cv2.VideoCapture:
-    """Tries indices 0, 1, and 2 to handle Continuity Camera or secondary webcams."""
-    indices = (preferred,) if preferred is not None else (0, 1, 2)
-    for idx in indices:
-        cap = cv2.VideoCapture(idx, cv2.CAP_AVFOUNDATION)
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
-        if cap.isOpened():
-            # Test frame grab
-            ok, _ = cap.read()
-            if ok:
-                print(f"Connected to camera at index {idx}.")
-                return cap
-            cap.release()
-
-    raise SystemExit(
-        "Could not open any active camera feed.\n"
-        "1. Ensure no other application (Zoom, FaceTime, Browser) is using the camera.\n"
-        "2. On macOS: System Settings → Privacy & Security → Camera, then allow "
-        "Cursor (or Terminal) and run this script again."
-    )
 
 
 def _pt(landmark) -> tuple[float, float, float]:
@@ -124,7 +105,7 @@ def draw_hud(frame, lines: list[str]) -> None:
         y += 26
     cv2.putText(
         frame,
-        "Q or Esc to quit",
+        "A add face  |  L list  |  Q/Esc quit",
         (28, y),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.5,
@@ -198,6 +179,7 @@ def main() -> None:
         min_detection_confidence=0.75,
         min_tracking_confidence=0.75,
     )
+    face_id = FaceID()
     cap = open_camera(preferred=args.camera)
     trails: dict[str, deque[tuple[int, int]]] = {
         "Left": deque(maxlen=TRAIL_LENGTH),
@@ -205,19 +187,24 @@ def main() -> None:
     }
     active_finger: dict[str, str] = {}
     pending: dict[str, tuple[str, int]] = {}
-    
+
     switcher = AppSwitcher()
     scroller = SwipeScroller()
-    
+
     last_cmd_tab_at = 0.0
     last_scroll_at = 0.0
     last_scroll_amount = 0
     failed_frame_count = 0
     window = "Hand Control — tracker"
 
+    names = face_id.list_names()
+    print(f"Loaded {len(names)} face profile(s)" + (f": {', '.join(names)}" if names else ""))
     if preview:
         cv2.namedWindow(window, cv2.WINDOW_NORMAL)
-        print("Tracking in the background too. Close this window or click away; Ctrl+C or Q to quit.")
+        print(
+            "Same camera for hands + face. "
+            "A = add face profile, L = list, Q/Esc or Ctrl+C to quit."
+        )
     else:
         print("Running without a preview. Hold thumb+middle & tap index to cycle apps. Ctrl+C to quit.")
 
@@ -244,6 +231,9 @@ def main() -> None:
             seen: set[str] = set()
             status_lines: list[str] = []
             saw_right = False
+
+            # Face recognition / enrollment on the shared feed (draws on frame).
+            status_lines.extend(face_id.process(frame, rgb))
 
             if result.multi_hand_landmarks:
                 handedness_list = result.multi_handedness or []
@@ -340,9 +330,9 @@ def main() -> None:
                 status_lines.append("Sent Tab")
             if time.monotonic() - last_scroll_at < 1.0:
                 status_lines.append(f"Scrolled {last_scroll_amount} lines!")
-            
-            if not status_lines:
-                status_lines = ["No hands in view"]
+
+            if not seen and not face_id.enrolling:
+                status_lines.append("No hands in view")
             status_lines.append("Hold Right thumb+middle & tap index = ⌘Tab cycle")
 
             if preview:
@@ -357,9 +347,23 @@ def main() -> None:
                     key = cv2.waitKey(1) & 0xFF
                     if key in (ord("q"), 27):
                         break
+                    if key in (ord("a"), ord("A")):
+                        if face_id.enrolling:
+                            face_id.cancel_enroll()
+                        else:
+                            name = prompt_name()
+                            if name:
+                                face_id.begin_enroll(name)
+                    elif key in (ord("l"), ord("L")):
+                        names = face_id.list_names()
+                        if names:
+                            print("Saved face profiles: " + ", ".join(names))
+                        else:
+                            print("No face profiles yet. Press A to add one.")
     finally:
         set_cmd_state(False)
         hands.close()
+        face_id.close()
         cap.release()
         cv2.destroyAllWindows()
 

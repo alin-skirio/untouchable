@@ -14,7 +14,9 @@ python track.py
 
 Hold one or both hands in front of the camera. Each hand gets a skeleton and a motion trail (teal = left, amber = right). Curl **exactly one** finger to move that hand's trail onto that fingertip; if more than one finger is down, the trail stays put.
 
-Pinch your **right** thumb, index, and middle fingertips together to send **⌘Tab**. Open those fingers before pinching again. The shortcut is sent system-wide, so it still works if the preview is in the background or closed. Press **Q** or **Esc** in the preview to quit, or **Ctrl+C** in the terminal.
+Pinch your **right** thumb, index, and middle fingertips together to send **⌘Tab**. Open those fingers before pinching again. The shortcut is sent system-wide, so it still works if the preview is in the background or closed.
+
+Face recognition uses the same camera and window: press **A** to add a named profile (saved in `profiles.db`), **L** to list profiles. Press **Q** or **Esc** in the preview to quit, or **Ctrl+C** in the terminal.
 
 Background-only (no window):
 
