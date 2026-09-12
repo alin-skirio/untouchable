@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .pose import LINES_PER_FRAME, pinky_pointing_up
+from .pose import LINES_PER_FRAME, pinky_only_up
 
 
 class ScrollDown:
@@ -15,7 +15,7 @@ class ScrollDown:
 
     def update(self, hand_landmarks, fingers_down: list[str]) -> int:
         """Return a small line count each frame the pinky stays pointing up."""
-        if not pinky_pointing_up(hand_landmarks.landmark, fingers_down):
+        if not pinky_only_up(hand_landmarks.landmark, fingers_down):
             self.accrued = 0.0
             return 0
 
