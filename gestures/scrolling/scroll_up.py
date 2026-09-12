@@ -1,16 +1,30 @@
-"""ScrollUp: inside Scrolling, pop the four fingers open and lift them."""
+"""ScrollUp: each fist → fully extended (pointing up) cycle pages up once."""
 
 
 class ScrollUp:
-    def __init__(self, width_increase: float = 0.28, min_down: float = 0.035):
-        self.width_increase = width_increase
-        # Image y grows downward, so a downward flick is a positive travel_y.
-        # Anything not clearly down counts as scroll up (including a straight open).
-        self.min_down = min_down
+    """Fires once when palm-reach grows from a fist to a fully raised open hand.
 
-    def triggered(self, four_open: bool, width_delta: float, travel_y: float) -> bool:
-        return (
-            four_open
-            and width_delta >= self.width_increase
-            and travel_y < self.min_down
-        )
+    After a page, the hand must return to a fist before the next page.
+    """
+
+    def __init__(self, fist_reach: float = 1.20, expanded_reach: float = 1.90):
+        self.fist_reach = fist_reach
+        self.expanded_reach = expanded_reach
+        self.from_fist = False
+
+    def reset(self) -> None:
+        self.from_fist = False
+
+    def update(self, *, in_line: bool, in_fist: bool, reach: float, pointing_up: bool) -> bool:
+        if not in_line:
+            return False
+
+        if in_fist and reach <= self.fist_reach:
+            self.from_fist = True
+            return False
+
+        if self.from_fist and pointing_up and reach >= self.expanded_reach:
+            self.from_fist = False
+            return True
+
+        return False

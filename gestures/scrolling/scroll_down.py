@@ -6,9 +6,12 @@ class ScrollDown:
         self.width_increase = width_increase
         self.min_down = min_down
 
-    def triggered(self, four_open: bool, width_delta: float, travel_y: float) -> bool:
+    def triggered(
+        self, four_open: bool, width_delta: float, travel_y: float, in_line: bool
+    ) -> bool:
         return (
-            four_open
+            in_line
+            and four_open
             and width_delta >= self.width_increase
             and travel_y >= self.min_down
         )

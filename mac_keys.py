@@ -8,6 +8,7 @@ import threading
 
 kVK_Tab = 0x30
 kVK_Command = 0x37
+kVK_PageUp = 0x74
 kCGHIDEventTap = 0
 kCGEventFlagMaskCommand = 0x100000
 
@@ -96,3 +97,16 @@ def async_cmd(down: bool) -> None:
 
 def async_tap_tab() -> None:
     threading.Thread(target=tap_tab, daemon=True).start()
+
+
+def page_up() -> None:
+    try:
+        cg = _core_graphics()
+        _post_key(cg, kVK_PageUp, True)
+        _post_key(cg, kVK_PageUp, False)
+    except Exception:
+        pass
+
+
+def async_page_up() -> None:
+    threading.Thread(target=page_up, daemon=True).start()
