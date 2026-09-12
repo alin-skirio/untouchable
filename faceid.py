@@ -1,10 +1,11 @@
 """Local face recognition profiles for the hand-control tracker.
 
-Stores named face encodings in profiles.db and matches live Face Mesh landmarks.
+Named encodings are saved under profiles/ so they persist between runs.
 """
 
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
 import subprocess
@@ -15,9 +16,13 @@ import cv2
 import mediapipe as mp
 import numpy as np
 
-DB_PATH = Path(__file__).resolve().parent / "profiles.db"
+PROFILES_DIR = Path(__file__).resolve().parent / "profiles"
+INDEX_PATH = PROFILES_DIR / "index.json"
+LEGACY_DB_PATH = Path(__file__).resolve().parent / "profiles.db"
 ENROLL_SAMPLES = 20
-MATCH_THRESHOLD = 0.085
+# L2 distance on pose-normalized mesh encodings. Higher = looser match.
+MATCH_THRESHOLD = 0.55
+MATCH_CONFIRM_FRAMES = 3
 LEFT_EYE = 33
 RIGHT_EYE = 263
 NOSE_TIP = 1
@@ -71,7 +76,6 @@ def _camera_try_order(preferred: int | None = None) -> list[tuple[int, str]]:
         preferred_only = [item for item in ranked if _camera_score(item[1]) >= 0]
         return preferred_only or ranked
 
-    # Continuity Camera often steals index 0; try built-in candidates first.
     return [(idx, f"index {idx}") for idx in (1, 0, 2, 3)]
 
 
@@ -140,6 +144,43 @@ def landmark_bbox(landmarks, width: int, height: int, pad: float = 0.08):
     return x1, y1, x2, y2
 
 
+def draw_face_label(frame, box, text: str, color) -> None:
+    """Draw a filled name plate on top of the face box."""
+    x1, y1, x2, y2 = box
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    scale = 0.85
+    thickness = 2
+    (tw, th), baseline = cv2.getTextSize(text, font, scale, thickness)
+    pad_x, pad_y = 10, 8
+    label_h = th + pad_y * 2
+    label_w = tw + pad_x * 2
+
+    # Prefer above the box; fall back inside the top edge if needed.
+    top = y1 - label_h - 4
+    if top < 4:
+        top = y1 + 4
+    left = max(4, min(x1, frame.shape[1] - label_w - 4))
+
+    cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+    cv2.rectangle(
+        frame,
+        (left, top),
+        (left + label_w, top + label_h),
+        color,
+        -1,
+    )
+    cv2.putText(
+        frame,
+        text,
+        (left + pad_x, top + pad_y + th),
+        font,
+        scale,
+        (20, 20, 20),
+        thickness,
+        cv2.LINE_AA,
+    )
+
+
 def match_profile(
     encoding: np.ndarray,
     profiles: list[tuple[str, np.ndarray]],
@@ -163,24 +204,20 @@ def match_profile(
     return best_name, best_dist
 
 
+def _safe_filename(name: str) -> str:
+    cleaned = re.sub(r"[^\w\-]+", "_", name.strip(), flags=re.UNICODE).strip("_")
+    return (cleaned or "profile").lower()
+
+
 class FaceID:
     """Local named face profiles + live Face Mesh recognition."""
 
-    def __init__(self, db_path: Path = DB_PATH):
-        self.db_path = Path(db_path)
-        self.conn = sqlite3.connect(str(self.db_path))
-        self.conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS profiles (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL UNIQUE COLLATE NOCASE,
-                encoding BLOB NOT NULL,
-                created_at REAL NOT NULL
-            )
-            """
-        )
-        self.conn.commit()
+    def __init__(self, profiles_dir: Path = PROFILES_DIR):
+        self.profiles_dir = Path(profiles_dir)
+        self.index_path = self.profiles_dir / "index.json"
+        self.profiles_dir.mkdir(parents=True, exist_ok=True)
         self.profiles: list[tuple[str, np.ndarray]] = []
+        self._migrate_legacy_db()
         self.reload()
 
         self._face_mesh = mp.solutions.face_mesh.FaceMesh(
@@ -194,21 +231,85 @@ class FaceID:
         self._enroll_name: str | None = None
         self._enroll_samples: list[np.ndarray] = []
         self._enroll_deadline = 0.0
+        self._pending_name: str | None = None
+        self._pending_count = 0
+        self._stable_name: str | None = None
+
+    def _read_index(self) -> dict:
+        if not self.index_path.exists():
+            return {"profiles": []}
+        try:
+            data = json.loads(self.index_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {"profiles": []}
+        if not isinstance(data, dict) or "profiles" not in data:
+            return {"profiles": []}
+        return data
+
+    def _write_index(self, entries: list[dict]) -> None:
+        payload = {"profiles": entries}
+        tmp = self.index_path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        tmp.replace(self.index_path)
+
+    def _migrate_legacy_db(self) -> None:
+        """One-time import from the old profiles.db if file profiles are empty."""
+        if self.index_path.exists() or not LEGACY_DB_PATH.exists():
+            return
+        try:
+            conn = sqlite3.connect(str(LEGACY_DB_PATH))
+            rows = conn.execute("SELECT name, encoding, created_at FROM profiles").fetchall()
+            conn.close()
+        except sqlite3.Error:
+            return
+        if not rows:
+            return
+        entries = []
+        for name, blob, created_at in rows:
+            encoding = np.frombuffer(blob, dtype=np.float32).copy()
+            file_name = f"{_safe_filename(name)}.npy"
+            np.save(self.profiles_dir / file_name, encoding)
+            entries.append(
+                {
+                    "name": name,
+                    "file": file_name,
+                    "created_at": created_at or time.time(),
+                }
+            )
+        self._write_index(entries)
+        print(f"Migrated {len(entries)} profile(s) from {LEGACY_DB_PATH.name} → {self.profiles_dir}")
 
     def reload(self) -> None:
-        rows = self.conn.execute(
-            "SELECT name, encoding FROM profiles ORDER BY name"
-        ).fetchall()
-        self.profiles = [
-            (name, np.frombuffer(blob, dtype=np.float32).copy()) for name, blob in rows
-        ]
+        index = self._read_index()
+        loaded: list[tuple[str, np.ndarray]] = []
+        valid_entries: list[dict] = []
+        for entry in index.get("profiles", []):
+            name = entry.get("name")
+            file_name = entry.get("file")
+            if not name or not file_name:
+                continue
+            path = self.profiles_dir / file_name
+            if not path.exists():
+                print(f"Missing encoding file for '{name}': {path}")
+                continue
+            try:
+                encoding = np.load(path)
+            except OSError as exc:
+                print(f"Could not load '{name}': {exc}")
+                continue
+            loaded.append((name, np.asarray(encoding, dtype=np.float32).reshape(-1)))
+            valid_entries.append(entry)
+
+        if len(valid_entries) != len(index.get("profiles", [])):
+            self._write_index(valid_entries)
+
+        self.profiles = sorted(loaded, key=lambda item: item[0].lower())
 
     def list_names(self) -> list[str]:
         return [name for name, _ in self.profiles]
 
     def close(self) -> None:
         self._face_mesh.close()
-        self.conn.close()
 
     def begin_enroll(self, name: str) -> None:
         name = name.strip()
@@ -220,6 +321,7 @@ class FaceID:
         self._enroll_samples = []
         self._enroll_deadline = time.monotonic() + 12.0
         print(f"Enrolling '{name}' — look at the camera ({ENROLL_SAMPLES} samples)...")
+        print(f"Profiles are saved to {self.profiles_dir}")
 
     def cancel_enroll(self) -> None:
         if self.enrolling:
@@ -227,6 +329,34 @@ class FaceID:
         self.enrolling = False
         self._enroll_name = None
         self._enroll_samples = []
+
+    def save_profile(self, name: str, encoding: np.ndarray) -> None:
+        """Persist a named encoding to disk (survives restarts)."""
+        self.profiles_dir.mkdir(parents=True, exist_ok=True)
+        encoding = np.asarray(encoding, dtype=np.float32).reshape(-1)
+        file_name = f"{_safe_filename(name)}.npy"
+        path = self.profiles_dir / file_name
+        tmp = self.profiles_dir / f"{_safe_filename(name)}.tmp.npy"
+        np.save(tmp, encoding)
+        tmp.replace(path)
+
+        index = self._read_index()
+        entries = [
+            e for e in index.get("profiles", []) if e.get("name", "").lower() != name.lower()
+        ]
+        entries.append(
+            {
+                "name": name,
+                "file": file_name,
+                "created_at": time.time(),
+            }
+        )
+        self._write_index(entries)
+        self.reload()
+
+        # Verify round-trip so silent disk failures are obvious.
+        if not any(n.lower() == name.lower() for n, _ in self.profiles):
+            raise RuntimeError(f"Failed to persist profile '{name}' to {path}")
 
     def _finish_enroll(self) -> None:
         name = self._enroll_name or "unknown"
@@ -240,25 +370,14 @@ class FaceID:
             return
 
         mean_encoding = np.mean(np.stack(samples, axis=0), axis=0).astype(np.float32)
-        self.conn.execute(
-            """
-            INSERT INTO profiles (name, encoding, created_at)
-            VALUES (?, ?, ?)
-            ON CONFLICT(name) DO UPDATE SET
-                encoding = excluded.encoding,
-                created_at = excluded.created_at
-            """,
-            (name, mean_encoding.tobytes(), time.time()),
+        self.save_profile(name, mean_encoding)
+        print(
+            f"Saved profile '{name}' ({len(samples)} samples) → {self.profiles_dir}. "
+            f"{len(self.profiles)} total."
         )
-        self.conn.commit()
-        self.reload()
-        print(f"Saved profile '{name}' ({len(samples)} samples). {len(self.profiles)} total.")
 
     def process(self, frame, rgb) -> list[str]:
-        """Run face recognition on the shared camera frame. Mutates frame for overlays.
-
-        Returns short status lines for the tracker HUD.
-        """
+        """Run face recognition on the shared camera frame. Mutates frame for overlays."""
         height, width = frame.shape[:2]
         results = self._face_mesh.process(rgb)
         status: list[str] = []
@@ -272,21 +391,11 @@ class FaceID:
                 if encoding is not None:
                     self._enroll_samples.append(encoding)
                 x1, y1, x2, y2 = landmark_bbox(face, width, height)
-                cv2.rectangle(frame, (x1, y1), (x2, y2), (40, 200, 120), 2)
                 label = (
                     f"Enrolling {self._enroll_name}: "
                     f"{len(self._enroll_samples)}/{ENROLL_SAMPLES}"
                 )
-                cv2.putText(
-                    frame,
-                    label,
-                    (x1, max(24, y1 - 10)),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.7,
-                    (40, 200, 120),
-                    2,
-                    cv2.LINE_AA,
-                )
+                draw_face_label(frame, (x1, y1, x2, y2), label, (40, 200, 120))
                 status.append(label)
                 if len(self._enroll_samples) >= ENROLL_SAMPLES:
                     self._finish_enroll()
@@ -298,36 +407,38 @@ class FaceID:
             return status
 
         if not results.multi_face_landmarks:
+            self._pending_name = None
+            self._pending_count = 0
+            self._stable_name = None
             return status
 
-        for face in results.multi_face_landmarks:
-            encoding = face_encoding(face)
-            x1, y1, x2, y2 = landmark_bbox(face, width, height)
-            name, dist = (
-                match_profile(encoding, self.profiles)
-                if encoding is not None
-                else (None, float("inf"))
-            )
-            if name:
-                color = (40, 200, 120)
-                label = name
-                status.append(f"Face: {name}")
-            else:
-                color = (40, 180, 255)
-                label = "Unknown"
-                status.append("Face: Unknown")
+        # Label the primary face with the matched profile name.
+        face = results.multi_face_landmarks[0]
+        encoding = face_encoding(face)
+        x1, y1, x2, y2 = landmark_bbox(face, width, height)
+        raw_name, _dist = (
+            match_profile(encoding, self.profiles)
+            if encoding is not None
+            else (None, float("inf"))
+        )
 
-            cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-            cv2.putText(
-                frame,
-                label,
-                (x1, max(24, y1 - 10)),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.75,
-                color,
-                2,
-                cv2.LINE_AA,
-            )
+        if raw_name == self._pending_name and raw_name is not None:
+            self._pending_count += 1
+        else:
+            self._pending_name = raw_name
+            self._pending_count = 1 if raw_name else 0
+
+        if self._pending_count >= MATCH_CONFIRM_FRAMES and raw_name:
+            self._stable_name = raw_name
+        elif raw_name is None:
+            self._stable_name = None
+
+        if self._stable_name:
+            draw_face_label(frame, (x1, y1, x2, y2), self._stable_name, (40, 200, 120))
+            status.append(f"Face: {self._stable_name}")
+        else:
+            draw_face_label(frame, (x1, y1, x2, y2), "Unknown", (40, 180, 255))
+            status.append("Face: Unknown")
 
         return status
 

@@ -198,7 +198,10 @@ def main() -> None:
     window = "Hand Control — tracker"
 
     names = face_id.list_names()
-    print(f"Loaded {len(names)} face profile(s)" + (f": {', '.join(names)}" if names else ""))
+    print(
+        f"Loaded {len(names)} face profile(s) from {face_id.profiles_dir}"
+        + (f": {', '.join(names)}" if names else "")
+    )
     if preview:
         cv2.namedWindow(window, cv2.WINDOW_NORMAL)
         print(
@@ -345,12 +348,15 @@ def main() -> None:
                     print("Preview closed. Tracking still running in the background. Ctrl+C to quit.")
                 else:
                     key = cv2.waitKey(1) & 0xFF
-                    if key in (ord("q"), 27):
+                    if key in (ord("q"),):
                         break
-                    if key in (ord("a"), ord("A")):
+                    if key == 27:  # Esc
                         if face_id.enrolling:
                             face_id.cancel_enroll()
                         else:
+                            break
+                    elif key in (ord("a"), ord("A")):
+                        if not face_id.enrolling:
                             name = prompt_name()
                             if name:
                                 face_id.begin_enroll(name)
