@@ -156,74 +156,16 @@ def _post_key(cg, key_code: int, key_down: bool, flags: int = 0) -> None:
     cg.CGEventPost(kCGHIDEventTap, event)
 
 
-kCGScrollEventUnitLine = 0
-kCGScrollEventUnitPixel = 1
-
-
 def smooth_scroll(lines: int) -> None:
-    """Line-unit wheel. Used for flicks and Grok scroll(lines)."""
-    _post_scroll(int(lines), kCGScrollEventUnitLine)
-
-
-def pixel_scroll(delta: int) -> None:
-    """Pixel-unit wheel. Small deltas feel continuous."""
-    _post_scroll(int(delta), kCGScrollEventUnitPixel)
-
-
-def _post_scroll(amount: int, unit: int) -> None:
-    if not _is_macos() or amount == 0:
-        return
+    """Generates a native scroll wheel event."""
     try:
         cg = _core_graphics()
-        cf = _core_foundation()
-        event = cg.CGEventCreateScrollWheelEvent(None, unit, 1, amount)
+        # 0 = lines unit, 1 = one scroll wheel, lines = amount to scroll
+        event = cg.CGEventCreateScrollWheelEvent(None, 0, 1, lines)
         if event:
             cg.CGEventPost(kCGHIDEventTap, event)
-            _release(cf, event)
     except Exception:
         pass
-
-
-class ScrollPump:
-    """90 Hz pixel stream with ease-in/out so held scroll is not a stair-step."""
-
-    def __init__(self, hz: float = 90.0):
-        self._hz = max(30.0, hz)
-        self._target = 0.0
-        self._vel = 0.0
-        self._carry = 0.0
-        self._lock = threading.Lock()
-        self._stop = threading.Event()
-        self._thread = threading.Thread(target=self._run, daemon=True, name="scroll-pump")
-        self._thread.start()
-
-    def set_rate(self, px_per_sec: float) -> None:
-        with self._lock:
-            self._target = float(px_per_sec)
-
-    def stop(self) -> None:
-        self.set_rate(0.0)
-        self._stop.set()
-        self._thread.join(timeout=0.4)
-
-    def _run(self) -> None:
-        dt = 1.0 / self._hz
-        while not self._stop.wait(dt):
-            with self._lock:
-                target = self._target
-            rising = abs(target) > abs(self._vel) + 1.0
-            follow = 0.20 if rising else 0.14
-            self._vel += (target - self._vel) * follow
-            if target == 0.0 and abs(self._vel) < 12.0:
-                self._vel = 0.0
-                self._carry = 0.0
-                continue
-            self._carry += self._vel * dt
-            step = int(self._carry)
-            if step == 0:
-                continue
-            self._carry -= step
-            pixel_scroll(step)
 
 
 def _cmd_tab_quartz() -> None:

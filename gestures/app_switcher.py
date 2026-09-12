@@ -35,10 +35,6 @@ class AppSwitcher:
         self.index_up = False
         self.pinch_count = 0
 
-    @property
-    def busy(self) -> bool:
-        return self.active or self.pinch_count > 0
-
     def update(self, hand_landmarks) -> tuple[bool, bool, bool]:
         lm = hand_landmarks.landmark
         palm = max(dist2(lm[WRIST], lm[MIDDLE_MCP]), 0.04)

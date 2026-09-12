@@ -1,4 +1,4 @@
-"""Right-hand pointer: open → fist → gun pose (index+middle+thumb out).
+"""Right-hand pointer: open → fist → index+middle+thumb out, then index-tip tracking.
 
 While engaged, folding the thumb left-clicks and folding the middle finger right-clicks.
 """
@@ -7,49 +7,24 @@ from __future__ import annotations
 
 import json
 import math
-import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
 import cv2
 
-from .landmarks import (
-    INDEX_TIP,
-    MIDDLE_MCP,
-    MIDDLE_TIP,
-    THUMB_TIP,
-    WRIST,
-    dist2,
-    index_track_px,
-    palm_size_px,
-)
+from .landmarks import index_tip_px, palm_size_px
 
-DEFAULT_BASE_SENSITIVITY = 1.6
+DEFAULT_BASE_SENSITIVITY = 1.0
 SENSITIVITY_MIN = 0.25
-SENSITIVITY_MAX = 4.0
-DEADZONE_PX = 1.8
-DEFAULT_PALM_PX = 220.0
-# Palm-width of fingertip travel → screen pixels at 1.0 gain. Desk-range, not a twitch.
-COVER_PX = 620.0
-SCALE_MIN = 1.8
-SCALE_MAX = 5.4
-CONFIRM_FRAMES = 8
-ARM_STEP_FRAMES = 4
-SEQ_GRACE = 4
+SENSITIVITY_MAX = 3.0
+SMOOTH_ALPHA = 0.35
+DEADZONE_PX = 1.5
+CONFIRM_FRAMES = 4
 MIN_PALM_PX = 1.0
-EXIT_FIST_FRAMES = 4
-CLICK_CONFIRM = 3
-CLICK_SETTLE = 3
-PALM_SMOOTH = 0.18
-GUN_THUMB_CLEAR = 0.55
-SWITCHER_COOLDOWN = 20
+LEAVE_GRACE = 12
+CLICK_CONFIRM = 2
 MAIN_FINGERS = frozenset({"index", "middle", "ring", "pinky"})
-
-# One Euro: low cutoff when still, rises with speed so flicks are not laggy.
-EURO_MINCUTOFF = 1.2
-EURO_BETA = 0.04
-EURO_DCUTOFF = 1.0
 
 REFERENCE_DIR = Path(__file__).resolve().parent.parent
 REFERENCE_PNG = REFERENCE_DIR / "hand_reference.png"
@@ -62,46 +37,6 @@ class CursorUpdate:
     dx: float
     dy: float
     click: Optional[str] = None
-
-
-class _OneEuro:
-    """Speed-aware low-pass. Slow motion stays quiet; fast motion stays tight."""
-
-    def __init__(
-        self,
-        mincutoff: float = EURO_MINCUTOFF,
-        beta: float = EURO_BETA,
-        dcutoff: float = EURO_DCUTOFF,
-    ):
-        self.mincutoff = mincutoff
-        self.beta = beta
-        self.dcutoff = dcutoff
-        self._x: Optional[float] = None
-        self._dx = 0.0
-
-    def reset(self) -> None:
-        self._x = None
-        self._dx = 0.0
-
-    def filter(self, x: float, dt: float) -> float:
-        if self._x is None or dt <= 0:
-            self._x = x
-            self._dx = 0.0
-            return x
-        dx = (x - self._x) / dt
-        self._dx = _lowpass(dx, self._dx, _alpha(self.dcutoff, dt))
-        cutoff = self.mincutoff + self.beta * abs(self._dx)
-        self._x = _lowpass(x, self._x, _alpha(cutoff, dt))
-        return self._x
-
-
-def _alpha(cutoff: float, dt: float) -> float:
-    tau = 1.0 / (2.0 * math.pi * max(cutoff, 1e-6))
-    return 1.0 / (1.0 + tau / max(dt, 1e-6))
-
-
-def _lowpass(value: float, prev: float, alpha: float) -> float:
-    return alpha * value + (1.0 - alpha) * prev
 
 
 def _clamp_sensitivity(value: float) -> float:
@@ -161,22 +96,15 @@ def persist_sensitivity(base_sensitivity: float) -> bool:
 
 
 def _is_open(down: set[str]) -> bool:
-    """Four mains extended. Thumb is ignored — MediaPipe often marks it folded."""
-    return not (MAIN_FINGERS & down)
+    """All five digits extended."""
+    return "thumb" not in down and not (MAIN_FINGERS & down)
 
 
 def _is_fist(down: set[str]) -> bool:
-    """All four mains curled — a real fist, not a pinch with a finger still out."""
     return len(MAIN_FINGERS & down) >= 4
 
 
-def _is_exit_fist(down: set[str]) -> bool:
-    """Index plus two other mains curled. Ends pointer without matching a click."""
-    mains = MAIN_FINGERS & down
-    return "index" in mains and len(mains) >= 3
-
-
-def _is_gun(down: set[str]) -> bool:
+def _is_move(down: set[str]) -> bool:
     """Index, middle, and thumb out; ring and pinky curled."""
     return (
         "thumb" not in down
@@ -187,35 +115,19 @@ def _is_gun(down: set[str]) -> bool:
     )
 
 
-def _gun_spread(hand_landmarks) -> bool:
-    """Thumb stands off the index/middle cluster. A pinch is not a gun."""
-    lm = hand_landmarks.landmark
-    palm = max(dist2(lm[WRIST], lm[MIDDLE_MCP]), 0.04)
-    thumb_index = dist2(lm[THUMB_TIP], lm[INDEX_TIP]) / palm
-    thumb_middle = dist2(lm[THUMB_TIP], lm[MIDDLE_TIP]) / palm
-    return thumb_index >= GUN_THUMB_CLEAR and thumb_middle >= GUN_THUMB_CLEAR
-
-
 def _is_pointer_hold(down: set[str]) -> bool:
     """Stay in pointer while index tracks; thumb/middle may fold for clicks."""
     return "index" not in down and "ring" in down and "pinky" in down
 
 
-def _ballistic(dx: float, dy: float) -> tuple[float, float]:
-    """Keep desk-range motion linear; only a little extra on a real flick."""
-    speed = math.hypot(dx, dy)
-    gain = 0.92 + 0.16 * (1.0 - math.exp(-speed / 22.0))
-    return dx * gain, dy * gain
-
-
 class PointerCursor:
-    """Relative macOS pointer from the index, scaled by desk sensitivity × palm ratio."""
+    """Relative macOS pointer from the index tip, scaled by desk sensitivity × palm ratio."""
 
     def __init__(
         self,
         confirm_frames: int = CONFIRM_FRAMES,
         base_sensitivity: Optional[float] = None,
-        smooth_alpha: float = 0.35,
+        smooth_alpha: float = SMOOTH_ALPHA,
         deadzone_px: float = DEADZONE_PX,
     ):
         palm, stored_gain = load_reference()
@@ -225,44 +137,29 @@ class PointerCursor:
         )
         self.smooth_alpha = smooth_alpha
         self.deadzone_px = deadzone_px
+        self.idle_smooth_alpha = 0.18
+        self.gesture_smooth_alpha = 0.35
+        self.idle_deadzone_px = 0.8
         self.ref_palm_px: Optional[float] = palm
         self.engaged = False
         self.arm_hint = "Pointer: open hand to arm"
         self._seq = "idle"
         self._enter_count = 0
-        self._open_count = 0
-        self._fist_count = 0
-        self._seq_miss = 0
         self._clutch = True
+        self._filtered: Optional[tuple[float, float]] = None
         self._prev: Optional[tuple[float, float]] = None
-        self._palm_px: Optional[float] = None
         self._leave_grace = 0
         self._thumb_fold = 0
         self._middle_fold = 0
-        self._settle = 0
-        self._fist_exit = 0
-        self._suppress = 0
-        self._last_t: Optional[float] = None
-        self._fx = _OneEuro()
-        self._fy = _OneEuro()
 
     @property
     def has_reference(self) -> bool:
         return self.ref_palm_px is not None and self.ref_palm_px > 0
 
     def distance_ratio(self, current_palm_px: float) -> float:
-        """Farther hand (smaller palm) → larger ratio. Always live, even without ⌘-."""
-        if current_palm_px <= 0:
+        if not self.has_reference or current_palm_px <= 0:
             return 1.0
-        ref = self.ref_palm_px if self.has_reference else DEFAULT_PALM_PX
-        ratio = ref / max(current_palm_px, MIN_PALM_PX)
-        return min(2.1, max(0.55, ratio))
-
-    def _scale(self, current_palm_px: float) -> float:
-        """Image pixels → screen pixels. Live palm keeps desk-range motion at any depth."""
-        palm = max(current_palm_px, MIN_PALM_PX)
-        raw = self.base_sensitivity * COVER_PX / palm
-        return min(SCALE_MAX, max(SCALE_MIN, raw))
+        return self.ref_palm_px / max(current_palm_px, MIN_PALM_PX)
 
     def set_base_sensitivity(self, value: float, persist: bool = True) -> None:
         self.base_sensitivity = _clamp_sensitivity(value)
@@ -274,10 +171,8 @@ class PointerCursor:
             return False
         self.ref_palm_px = palm_px
         self._clutch = True
+        self._filtered = None
         self._prev = None
-        self._palm_px = None
-        self._fx.reset()
-        self._fy.reset()
         if frame is not None and frame_size is not None:
             return save_reference(
                 frame,
@@ -290,75 +185,43 @@ class PointerCursor:
 
     def engage_from_s(self) -> None:
         """Engage immediately and clutch so the next relative frame does not jump."""
-        self._begin()
+        self.engaged = True
+        self._enter_count = self.confirm_frames
+        self._clutch = True
+        self._filtered = None
+        self._prev = None
+        self._leave_grace = 0
+        self._thumb_fold = 0
+        self._middle_fold = 0
+        self._seq = "idle"
+        self.arm_hint = "Pointer"
 
     def reset(self) -> None:
         self.engaged = False
         self._enter_count = 0
-        self._open_count = 0
-        self._fist_count = 0
-        self._seq_miss = 0
         self._clutch = True
+        self._filtered = None
         self._prev = None
-        self._palm_px = None
         self._leave_grace = 0
         self._thumb_fold = 0
         self._middle_fold = 0
-        self._settle = 0
-        self._fist_exit = 0
-        self._suppress = 0
-        self._last_t = None
-        self._fx.reset()
-        self._fy.reset()
         self._seq = "idle"
         self.arm_hint = "Pointer: open hand to arm"
+
+    def _scale(self, current_palm_px: float) -> float:
+        return self.base_sensitivity * self.distance_ratio(current_palm_px)
 
     def _begin(self) -> None:
         self.engaged = True
         self._enter_count = self.confirm_frames
-        self._open_count = 0
-        self._fist_count = 0
-        self._seq_miss = 0
         self._clutch = True
+        self._filtered = None
         self._prev = None
-        self._palm_px = None
         self._leave_grace = 0
         self._thumb_fold = 0
         self._middle_fold = 0
-        self._settle = 0
-        self._fist_exit = 0
-        self._last_t = None
-        self._fx.reset()
-        self._fy.reset()
         self._seq = "idle"
-        self.arm_hint = "Pointer · fist to exit"
-
-    def cancel_arm(self) -> None:
-        """Drop a half-finished arm sequence without touching an active pointer."""
-        if not self.engaged:
-            self._drop_sequence()
-
-    def suppress_arm(self, frames: int = SWITCHER_COOLDOWN) -> None:
-        """Ignore arming after app switcher so a pinch-flap cannot become the gun."""
-        self.cancel_arm()
-        if not self.engaged:
-            self._suppress = max(self._suppress, frames)
-
-    def _dt(self) -> float:
-        now = time.monotonic()
-        if self._last_t is None:
-            self._last_t = now
-            return 1.0 / 30.0
-        dt = now - self._last_t
-        self._last_t = now
-        return min(0.08, max(1.0 / 90.0, dt))
-
-    def _smooth_palm(self, palm: float) -> float:
-        if self._palm_px is None or palm <= 0:
-            self._palm_px = palm
-            return palm
-        self._palm_px = PALM_SMOOTH * palm + (1.0 - PALM_SMOOTH) * self._palm_px
-        return self._palm_px
+        self.arm_hint = "Pointer"
 
     def _click_from_folds(self, down: set[str]) -> Optional[str]:
         """Thumb fold → left click; middle fold → right click. Edge-triggered."""
@@ -378,119 +241,91 @@ class PointerCursor:
             self._middle_fold = 0
         return click
 
-    def _drop_sequence(self) -> None:
-        self._seq = "idle"
-        self._enter_count = 0
-        self._open_count = 0
-        self._fist_count = 0
-        self._seq_miss = 0
-        self.arm_hint = "Pointer: open hand to arm"
-
-    def _miss(self, hint: str) -> None:
-        self._seq_miss += 1
-        if self._seq_miss >= SEQ_GRACE:
-            self._drop_sequence()
-            return
-        self.arm_hint = hint
-
-    def _arm_sequence(self, down: set[str], hand_landmarks) -> bool:
-        """Advance open → fist → spread gun. One bad frame does not restart it."""
+    def _arm_sequence(self, down: set[str]) -> bool:
+        """Advance open → fist → pointer pose. Returns True when control should start."""
         if _is_open(down):
-            self._seq_miss = 0
-            self._fist_count = 0
+            self._seq = "open"
             self._enter_count = 0
-            self._open_count += 1
-            if self._open_count >= ARM_STEP_FRAMES:
-                self._seq = "open"
-                self.arm_hint = "Pointer: fist next"
-            else:
-                self.arm_hint = "Pointer: open hand to arm"
+            self.arm_hint = "Pointer: fist next"
             return False
-
         if _is_fist(down):
             if self._seq in ("open", "fist"):
-                self._seq_miss = 0
+                self._seq = "fist"
                 self._enter_count = 0
-                self._fist_count += 1
-                if self._fist_count >= ARM_STEP_FRAMES:
-                    self._seq = "fist"
-                    self.arm_hint = "Pointer: gun pose — index, middle, thumb"
-                else:
-                    self.arm_hint = "Pointer: fist next"
+                self.arm_hint = "Pointer: index, middle, thumb out"
             else:
-                self._miss("Pointer: open hand first")
+                self.arm_hint = "Pointer: open hand first"
             return False
-
-        if _is_gun(down) and _gun_spread(hand_landmarks):
+        if _is_move(down):
             if self._seq != "fist":
-                self._miss("Pointer: open → fist first")
+                self._enter_count = 0
+                self.arm_hint = "Pointer: open → fist first"
                 return False
-            self._seq_miss = 0
             self._enter_count += 1
-            self.arm_hint = "Pointer: hold gun pose"
-            return self._enter_count >= self.confirm_frames
-
-        if self._seq == "idle":
-            self.arm_hint = "Pointer: open hand to arm"
+            self.arm_hint = "Pointer: hold pose"
+            if self._enter_count >= self.confirm_frames:
+                return True
             return False
+        self._enter_count = 0
         if self._seq == "fist":
-            self._miss("Pointer: gun pose — index, middle, thumb")
+            self.arm_hint = "Pointer: index, middle, thumb out"
         elif self._seq == "open":
-            self._miss("Pointer: fist next")
+            self.arm_hint = "Pointer: fist next"
         else:
-            self._miss("Pointer: open hand to arm")
+            self.arm_hint = "Pointer: open hand to arm"
         return False
 
     def update(self, hand_landmarks, fingers_down: list[str], frame_size) -> CursorUpdate:
         width, height = frame_size
         down = set(fingers_down)
+        move = _is_move(down)
         hold = _is_pointer_hold(down)
 
         if not self.engaged:
-            if self._suppress > 0:
-                self._suppress -= 1
-                return CursorUpdate(False, 0.0, 0.0)
-            if self._arm_sequence(down, hand_landmarks):
+            if self._arm_sequence(down):
                 self._begin()
             if not self.engaged:
                 return CursorUpdate(False, 0.0, 0.0)
 
-        if _is_exit_fist(down):
-            self._fist_exit += 1
-            if self._fist_exit >= EXIT_FIST_FRAMES:
+        if not hold:
+            self._leave_grace += 1
+            if self._leave_grace >= LEAVE_GRACE:
                 self.reset()
                 return CursorUpdate(False, 0.0, 0.0)
             self._clutch = True
             return CursorUpdate(True, 0.0, 0.0)
-        self._fist_exit = 0
 
-        if not hold:
-            self._clutch = True
-            return CursorUpdate(True, 0.0, 0.0)
-
+        self._leave_grace = 0
         click = self._click_from_folds(down)
-        if click:
-            self._settle = CLICK_SETTLE
+
+        if not move:
             self._clutch = True
-
-        raw = index_track_px(hand_landmarks, width, height)
-        palm = self._smooth_palm(palm_size_px(hand_landmarks, width, height))
-        dt = self._dt()
-        filtered = (self._fx.filter(raw[0], dt), self._fy.filter(raw[1], dt))
-
-        if self._clutch or self._prev is None or self._settle > 0:
-            self._prev = filtered
-            self._clutch = False
-            if self._settle > 0:
-                self._settle -= 1
             return CursorUpdate(True, 0.0, 0.0, click)
 
-        dximg = filtered[0] - self._prev[0]
-        dyimg = filtered[1] - self._prev[1]
-        self._prev = filtered
-        scale = self._scale(palm)
-        dx, dy = _ballistic(dximg * scale, dyimg * scale)
-        if math.hypot(dx, dy) < self.deadzone_px:
-            dx = dy = 0.0
+        raw = index_tip_px(hand_landmarks, width, height)
+        palm = palm_size_px(hand_landmarks, width, height)
+        if self._filtered is None:
+            self._filtered = raw
+        else:
+            alpha = self.gesture_smooth_alpha if self.engaged else self.idle_smooth_alpha
+            self._filtered = (
+                alpha * raw[0] + (1.0 - alpha) * self._filtered[0],
+                alpha * raw[1] + (1.0 - alpha) * self._filtered[1],
+            )
+
+        dx = dy = 0.0
+        if self._clutch or self._prev is None:
+            self._prev = self._filtered
+            self._clutch = False
+        else:
+            dximg = self._filtered[0] - self._prev[0]
+            dyimg = self._filtered[1] - self._prev[1]
+            self._prev = self._filtered
+            scale = self._scale(palm)
+            dx = dximg * scale
+            dy = dyimg * scale
+            deadzone = self.deadzone_px if self.engaged else self.idle_deadzone_px
+            if math.hypot(dx, dy) < deadzone:
+                dx = dy = 0.0
 
         return CursorUpdate(True, dx, dy, click)

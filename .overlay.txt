@@ -1,0 +1,7 @@
+intro=0
+hud=0
+locked=0
+name=Alex
+voice=1
+pointer=0
+quit=0

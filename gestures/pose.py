@@ -5,7 +5,6 @@ from __future__ import annotations
 import math
 
 from .landmarks import (
-    INDEX_MCP,
     INDEX_TIP,
     MIDDLE_MCP,
     MIDDLE_TIP,
@@ -18,8 +17,8 @@ from .landmarks import (
 
 TOGETHER = 0.42
 LINE_DEV = 0.18
-SCROLL_PX_SEC = 280.0
-FAST_PX_SEC = 480.0
+LINES_PER_FRAME = 12.0
+FAST_LINES_PER_FRAME = 24.0
 THUMB_TUCKED = 1.05
 
 ALL_FINGERS = ("thumb", "index", "middle", "ring", "pinky")
@@ -114,23 +113,6 @@ def pinky_only_up(lm, fingers_down: list[str]) -> bool:
     return others_down and pinky_pointing_up(lm, fingers_down)
 
 
-def index_pointing_up(lm, fingers_down: list[str]) -> bool:
-    """True when the index is extended and its tip sits above the palm and knuckle."""
-    if "index" in fingers_down:
-        return False
-    _, cy = palm_center(lm)
-    tip = lm[INDEX_TIP]
-    knuckle = lm[INDEX_MCP]
-    return tip.y < cy - 0.03 and tip.y < knuckle.y
-
-
-def index_only_up(lm, fingers_down: list[str]) -> bool:
-    """True when the index points up and middle, ring, and pinky are curled."""
-    down = set(fingers_down)
-    others_down = all(name in down for name in ("middle", "ring", "pinky"))
-    return others_down and index_pointing_up(lm, fingers_down)
-
-
 def thumb_tucked(lm, fingers_down: list[str]) -> bool:
     """True when the thumb is folded into the fist, not standing off the palm."""
     if "thumb" not in fingers_down:
@@ -142,21 +124,12 @@ def thumb_tucked(lm, fingers_down: list[str]) -> bool:
 
 
 def pinky_scroll_rate(lm, fingers_down: list[str]) -> float:
-    """Pixels per second for pinky scroll, or 0 if the pose is not active."""
+    """Lines per frame for pinky scroll, or 0 if the pose is not active."""
     if not pinky_only_up(lm, fingers_down):
         return 0.0
     if thumb_tucked(lm, fingers_down):
-        return FAST_PX_SEC
-    return SCROLL_PX_SEC
-
-
-def index_scroll_rate(lm, fingers_down: list[str]) -> float:
-    """Pixels per second for index-pointer scroll, or 0 if the pose is not active."""
-    if not index_only_up(lm, fingers_down):
-        return 0.0
-    if thumb_tucked(lm, fingers_down):
-        return FAST_PX_SEC
-    return SCROLL_PX_SEC
+        return FAST_LINES_PER_FRAME
+    return LINES_PER_FRAME
 
 
 def pointing_up(lm) -> bool:

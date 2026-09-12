@@ -10,7 +10,6 @@ from mac_keys import display_bounds
 
 CAM_WINDOW = "Hand Control — tracker"
 RAIL_WINDOW = "Hand Control"
-KEYS_WINDOW = " "
 
 FEATURES = (
     ("pointer", "Pointer"),
@@ -40,8 +39,7 @@ RAIL_H = 128
 class CameraHud:
     def __init__(self) -> None:
         self.enabled = {key: True for key, _label in FEATURES}
-        self.preview = False
-        self.chrome = True
+        self.preview = True
         self.faces_open = False
         self.faces: list[str] = []
         self.faces_sel = 0
@@ -217,10 +215,8 @@ def _status_view(lines: list[str]) -> tuple[str, str, str, str]:
             hint = line
         elif line == "No hands in view":
             hint = hint or "No hands in view"
-        elif low.startswith("unknown face"):
-            hint = line
     if locked:
-        return "Locked", "Idle", meta, hint or "A known face unlocks"
+        return "Locked", "Idle", meta, hint or "Look at the camera to unlock"
     if face and face != "Unknown":
         return f"Hi, {face}"[:18], mode, meta, hint
     if face == "Unknown":
@@ -228,74 +224,18 @@ def _status_view(lines: list[str]) -> tuple[str, str, str, str]:
     return "Live", mode, meta, hint
 
 
-def overlay_label(lines: list[str]) -> str:
-    """One-line fallback. Prefer overlay_copy for the desktop card."""
-    title, detail, _locked = overlay_copy(lines)
-    if detail:
-        return f"{title} · {detail}"
-    return title
-
-
-def overlay_copy(lines: list[str]) -> tuple[str, str, bool]:
-    """Title, subtitle, and lock flag for the centered overlay card."""
-    state, mode, _meta, hint = _status_view(lines)
-    if state == "Locked":
-        return "Locked", "", True
-    if hint.lower().startswith("unknown face"):
-        countdown = hint.replace("Unknown face — ", "").replace("Unknown face - ", "")
-        return countdown or "Locking", "", False
-    who = state.removeprefix("Hi, ").strip()
-    if who in ("", "Live"):
-        who = "Hand Control"
-    if who == "New face":
-        return "New face", "", False
-    if mode in ("Ready", "Idle", ""):
-        return who, "", False
-    return mode, "", False
-
-
-status_view = _status_view
-
-
-def _brand_chip(frame) -> None:
-    label = "Hand Control"
-    tw, _ = chrome.measure(label, 12, "medium")
-    width = tw + 28
-    chrome.glass_panel(frame, 12, 12, 12 + width, 38, radius=13)
-    cv2.circle(frame, (24, 25), 3, TEAL, -1, cv2.LINE_AA)
-    chrome.text(frame, label, 34, 25, size=12, color=TEXT, alpha=220, weight="medium", anchor="lm")
-
-
-def _unlock_pill(frame, who: str) -> None:
-    label = f"Unlocked · {who}" if who else "Unlocked"
-    tw, _ = chrome.measure(label, 12)
-    width = tw + 32
-    x2 = frame.shape[1] - 12
-    x1 = x2 - width
-    chrome.pill(frame, x1, 12, label, dot=GREEN, height=26, size=11, pad_x=12)
-
-
-def _lock_banner(frame, who: str) -> None:
-    h, w = frame.shape[:2]
-    label = "Commands off · unfamiliar face"
-    tw, _ = chrome.measure(label, 13)
-    width = tw + 36
-    x1 = (w - width) // 2
-    y1 = 12
-    chrome.glass_panel(
-        frame,
-        x1,
-        y1,
-        x1 + width,
-        y1 + 28,
-        radius=14,
-        fill=(18, 12, 14, 190),
-        outline=(251, 191, 36, 70),
-    )
-    cv2.circle(frame, (x1 + 14, y1 + 14), 3, AMBER, -1, cv2.LINE_AA)
-    chrome.text(frame, label, x1 + 24, y1 + 14, size=12, color=AMBER, alpha=230, anchor="lm")
-    if who:
-        chrome.text(frame, who, w // 2, y1 + 40, size=11, color=ROSE, alpha=180, anchor="mt")
+def _status_bar(frame, state: str, mode: str, meta: str) -> None:
+    width = frame.shape[1]
+    x1, y1 = PAD, PAD
+    x2, y2 = width - PAD, PAD + 36
+    _round_rect(frame, x1, y1, x2, y2, 18, GRAPHITE, fill=True)
+    _round_rect(frame, x1, y1, x2, y2, 18, LINE, fill=False)
+    locked = state == "Locked"
+    cv2.circle(frame, (x1 + 16, y1 + 18), 5, ALERT if locked else ICE, -1, cv2.LINE_AA)
+    label = f"{state}   {mode}"
+    if meta:
+        label += f"   {meta}"
+    _text(frame, label, x1 + 30, y1 + 24, 0.48, WHITE)
 
 
 def _hint_bar(frame, hint: str) -> None:
@@ -518,31 +458,9 @@ def open_rail(hud: CameraHud) -> None:
 
 
 def open_camera_window(hud: CameraHud) -> None:
-    close_key_sink()
     cv2.namedWindow(CAM_WINDOW, cv2.WINDOW_NORMAL)
     cv2.setWindowTitle(CAM_WINDOW, "Hand Control")
     hud.attach_cam(CAM_WINDOW)
-
-
-def open_key_sink() -> None:
-    """Tiny off-screen window so C and Q still work in overlay mode."""
-    if window_open(KEYS_WINDOW):
-        return
-    cv2.namedWindow(KEYS_WINDOW, cv2.WINDOW_NORMAL)
-    cv2.resizeWindow(KEYS_WINDOW, 2, 2)
-    try:
-        cv2.moveWindow(KEYS_WINDOW, -120, -120)
-    except cv2.error:
-        pass
-
-
-def close_key_sink() -> None:
-    if not window_open(KEYS_WINDOW):
-        return
-    try:
-        cv2.destroyWindow(KEYS_WINDOW)
-    except cv2.error:
-        pass
 
 
 def window_open(name: str) -> bool:

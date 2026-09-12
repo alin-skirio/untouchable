@@ -18,12 +18,4 @@ simplified/
 handoffs/*.md
 handoffs/*.png
 .presence.json
-.overlay.txt
-.overlay.txt.tmp
-.overlay.stop
-.overlay.json
-.overlay.json.tmp
-.overlay.event
-.overlay.host.log
-.voice.json
 
