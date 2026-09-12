@@ -54,9 +54,10 @@ HAND_COLORS = {
 DEFAULT_COLOR = (0, 200, 255)
 
 
-def open_camera() -> cv2.VideoCapture:
+def open_camera(preferred: int | None = None) -> cv2.VideoCapture:
     """Tries indices 0, 1, and 2 to handle Continuity Camera or secondary webcams."""
-    for idx in (0, 1, 2):
+    indices = (preferred,) if preferred is not None else (0, 1, 2)
+    for idx in indices:
         cap = cv2.VideoCapture(idx, cv2.CAP_AVFOUNDATION)
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
