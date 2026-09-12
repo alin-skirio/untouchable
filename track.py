@@ -14,14 +14,9 @@ Point only the left pinky up (index, middle, and ring curled) to
 ScrollUp, or only the right pinky up to ScrollDown. Press the thumb
 into the fist to go faster; release it to return to the normal speed.
 
-Point index+middle with ring+pinky curled to move the macOS cursor from the index tip.
-A very fast open-and-close fist that lands on that pointing pose toggles tracking on or off.
-Press S to warp the cursor onto that fingertip. Tap thumb to the curled ring (<0.5s) to
-left-click, or hold to drag; tap the side of the pointing index to right-click.
+Point index+middle+thumb with ring+pinky curled to move the cursor — but only after
+open hand → fist → that pose. Press S to warp the cursor onto the index tip.
 ⌘T captures a desk-distance reference; the Desk slider is base sensitivity.
-Point index+middle with ring+pinky curled to move the macOS cursor.
-Curl index+middle to left-drag; add a pointed thumb to right-drag.
-⌘T captures a reference image so cursor travel stays consistent with distance.
 Hold right thumb+ring+pinky down, keep index+middle up and together,
 and swipe up rapidly to scroll down dynamically based on swipe severity.
 
@@ -46,23 +41,24 @@ import mediapipe as mp
 from faceid import FaceID, NameEntryUI, open_camera
 from gestures.app_switcher import AppSwitcher
 from gestures.cursor import PointerCursor
-from gestures.landmarks import palm_size_px
-from gestures.scrolling import Scrolling
+from gestures.landmarks import INDEX_TIP, palm_size_px
+from gestures.scroll_down import ScrollDown
+from gestures.scroll_up import ScrollUp
 from gestures.swipe_scroller import SwipeScroller
 from mac_keys import (
     async_cmd,
     async_tap_tab,
     display_bounds,
-    move_mouse,
     mouse_down,
     mouse_up,
+    move_mouse,
     release_mouse,
     set_cmd_state,
     set_mouse_position,
     smooth_scroll,
     start_cmd_t_monitor,
 )
-from rim_flash import flash_pointer_rim
+from rim_flash import draw_pointer_bezel, flash_pointer_rim
 
 TRAIL_LENGTH = 24
 MAX_HANDS = 2
@@ -142,8 +138,7 @@ def draw_hud(frame, lines: list[str], sensitivity: float | None = None) -> None:
         y += 26
     cv2.putText(
         frame,
-        "Q/Esc quit · S place cursor",
-        "A add face  |  L list  |  Q/Esc quit",
+        "A add face  |  L list  |  S place cursor  |  Q/Esc quit",
         (28, y),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.5,
@@ -289,14 +284,14 @@ def main() -> None:
         cv2.setTrackbarMin(TRACKBAR_NAME, window, TRACKBAR_MIN)
         print("Tracking in the background too. Close this window or click away; Ctrl+C or Q to quit.")
         print("S places the cursor on the index tip. ⌘T is the desk reference. Desk slider is base sensitivity.")
-        print("⌘T captures a hand-distance reference. Index+middle up, ring+pinky down moves the cursor.")
+        print("⌘T captures a hand-distance reference. Open → fist → index+middle+thumb out starts the pointer.")
         print(
             "Same camera for hands + face. "
             "A = add face profile (type name in the window), L = list, Q/Esc or Ctrl+C to quit."
         )
     else:
         print("Running without a preview. Hold thumb+middle & tap index to cycle apps. Ctrl+C to quit.")
-        print("⌘T captures a desk-distance reference. Index+middle up, ring+pinky down moves the cursor.")
+        print("⌘T captures a desk-distance reference. Open → fist → index+middle+thumb out starts the pointer.")
 
     try:
         while running:
@@ -398,16 +393,11 @@ def main() -> None:
 
                         was_pointing = pointer.engaged
                         cursor = pointer.update(hand_landmarks, down, (width, height))
+                        if cursor.dx or cursor.dy:
+                            move_mouse(cursor.dx, cursor.dy)
                         if cursor.click:
                             mouse_down(cursor.click)
                             mouse_up(cursor.click)
-                        if cursor.button_down:
-                            mouse_down(cursor.button_down)
-                        drag = pointer.held_button or cursor.button_up
-                        if cursor.dx or cursor.dy:
-                            move_mouse(cursor.dx, cursor.dy, dragging=drag)
-                        if cursor.button_up:
-                            mouse_up(cursor.button_up)
                         if cursor.engaged and not was_pointing:
                             flash_pointer_rim(True)
                         elif was_pointing and not cursor.engaged:
@@ -416,16 +406,17 @@ def main() -> None:
                         if cursor.engaged:
                             scroll_down.reset()
                             scroller.reset()
-                            if pointer.held_button == "left":
-                                status_lines.append("Left drag")
-                            elif pointer.held_button == "right":
-                                status_lines.append("Right drag")
+                            if cursor.click == "left":
+                                status_lines.append("Pointer · left click")
+                            elif cursor.click == "right":
+                                status_lines.append("Pointer · right click")
                             else:
                                 status_lines.append("Pointer")
                         elif was_pointing:
                             scroll_down.reset()
                             scroller.reset()
                         else:
+                            status_lines.append(pointer.arm_hint)
                             started, tapped, ended = switcher.update(hand_landmarks)
 
                             if started:
@@ -463,14 +454,9 @@ def main() -> None:
                 scroll_up.reset()
 
             if not saw_right:
-                if pointer.engaged or pointer.held_button:
-                    was_engaged = pointer.engaged
-                    released = pointer.reset()
-                    if released:
-                        mouse_up(released)
-                    release_mouse()
-                    if was_engaged:
-                        flash_pointer_rim(False)
+                if pointer.engaged:
+                    pointer.reset()
+                    flash_pointer_rim(False)
                 if switcher.active:
                     switcher.reset()
                     async_cmd(False)
@@ -514,18 +500,17 @@ def main() -> None:
             status_lines.append(f"Dist {pointer.distance_ratio(last_right_palm):.1f}x")
             if last_ref_msg and time.monotonic() - last_ref_at < 1.5:
                 status_lines.append(last_ref_msg)
-                status_lines.append(f"Scrolled {last_scroll_amount} lines!")
 
-            if not seen and not face_id.enrolling:
+            if not seen and not face_id.enrolling and "No hands in view" not in status_lines:
                 status_lines.append("No hands in view")
             status_lines.append("Hold Right thumb+middle & tap index = ⌘Tab cycle")
-            status_lines.append("S = place on index tip; thumb-to-ring = left; thumb-to-index = right")
-            status_lines.append("Tap <0.5s clicks; hold longer to drag until you leave the finger")
-            status_lines.append("Fast open+fist then point = toggle pointer")
+            status_lines.append("S = place cursor on index tip")
+            status_lines.append("Open → fist → index+middle+thumb out = pointer")
+            status_lines.append("Pointer: thumb fold = left click, middle fold = right click")
 
             if preview:
                 draw_hud(frame, status_lines, sensitivity=pointer.base_sensitivity)
-                draw_hud(frame, status_lines)
+                draw_pointer_bezel(frame, pointer.engaged)
                 name_ui.draw(frame)
                 cv2.imshow(window, frame)
                 visible = cv2.getWindowProperty(window, cv2.WND_PROP_VISIBLE)
@@ -554,11 +539,11 @@ def main() -> None:
                                 set_mouse_position(
                                     ox + nx * sw,
                                     oy + ny * sh,
-                                    dragging=pointer.held_button,
                                 )
                                 was_engaged = pointer.engaged
                                 pointer.engage_from_s()
-                                scrolling.reset()
+                                scroll_up.reset()
+                                scroll_down.reset()
                                 scroller.reset()
                                 if not was_engaged:
                                     flash_pointer_rim(True)

@@ -1,18 +1,19 @@
-"""Right-hand pointer: index-tip tracking, thumb-to-ring/index tap-or-hold, desk × distance scale."""
+"""Right-hand pointer: open → fist → index+middle+thumb out, then index-tip tracking.
+
+While engaged, folding the thumb left-clicks and folding the middle finger right-clicks.
+"""
 
 from __future__ import annotations
 
 import json
 import math
-import time
-from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
 import cv2
 
-from .landmarks import index_tip_px, palm_size_px, thumb_to_index_side, thumb_to_ring_side
+from .landmarks import index_tip_px, palm_size_px
 
 DEFAULT_BASE_SENSITIVITY = 1.0
 SENSITIVITY_MIN = 0.25
@@ -21,12 +22,8 @@ SMOOTH_ALPHA = 0.35
 DEADZONE_PX = 1.5
 CONFIRM_FRAMES = 4
 MIN_PALM_PX = 1.0
-CLICK_ON = 0.36
-CLICK_OFF = 0.52
-HOLD_CLICK = 0.5
-TOGGLE_HISTORY = 8
-TOGGLE_COOLDOWN = 15
 LEAVE_GRACE = 12
+CLICK_CONFIRM = 2
 MAIN_FINGERS = frozenset({"index", "middle", "ring", "pinky"})
 
 REFERENCE_DIR = Path(__file__).resolve().parent.parent
@@ -39,8 +36,6 @@ class CursorUpdate:
     engaged: bool
     dx: float
     dy: float
-    button_down: Optional[str]
-    button_up: Optional[str]
     click: Optional[str] = None
 
 
@@ -100,24 +95,29 @@ def persist_sensitivity(base_sensitivity: float) -> bool:
         return False
 
 
+def _is_open(down: set[str]) -> bool:
+    """All five digits extended."""
+    return "thumb" not in down and not (MAIN_FINGERS & down)
+
+
+def _is_fist(down: set[str]) -> bool:
+    return len(MAIN_FINGERS & down) >= 4
+
+
 def _is_move(down: set[str]) -> bool:
+    """Index, middle, and thumb out; ring and pinky curled."""
     return (
-        "index" not in down
+        "thumb" not in down
+        and "index" not in down
         and "middle" not in down
         and "ring" in down
         and "pinky" in down
     )
 
 
-def _pose_name(down: set[str]) -> str:
-    if _is_move(down):
-        return "point"
-    curled = len(MAIN_FINGERS & down)
-    if curled >= 4:
-        return "fist"
-    if curled == 0:
-        return "open"
-    return "other"
+def _is_pointer_hold(down: set[str]) -> bool:
+    """Stay in pointer while index tracks; thumb/middle may fold for clicks."""
+    return "index" not in down and "ring" in down and "pinky" in down
 
 
 class PointerCursor:
@@ -142,16 +142,15 @@ class PointerCursor:
         self.idle_deadzone_px = 0.8
         self.ref_palm_px: Optional[float] = palm
         self.engaged = False
-        self.held_button: Optional[str] = None
+        self.arm_hint = "Pointer: open hand to arm"
+        self._seq = "idle"
         self._enter_count = 0
         self._clutch = True
         self._filtered: Optional[tuple[float, float]] = None
         self._prev: Optional[tuple[float, float]] = None
-        self._poses: deque[str] = deque(maxlen=TOGGLE_HISTORY)
-        self._toggle_cooldown = 0
         self._leave_grace = 0
-        self._pending_button: Optional[str] = None
-        self._pending_at = 0.0
+        self._thumb_fold = 0
+        self._middle_fold = 0
 
     @property
     def has_reference(self) -> bool:
@@ -192,131 +191,116 @@ class PointerCursor:
         self._filtered = None
         self._prev = None
         self._leave_grace = 0
-        self._toggle_cooldown = TOGGLE_COOLDOWN
-        self._pending_button = None
-        self._pending_at = 0.0
+        self._thumb_fold = 0
+        self._middle_fold = 0
+        self._seq = "idle"
+        self.arm_hint = "Pointer"
 
-    def reset(self) -> Optional[str]:
-        released = self.held_button
+    def reset(self) -> None:
         self.engaged = False
-        self.held_button = None
         self._enter_count = 0
         self._clutch = True
         self._filtered = None
         self._prev = None
         self._leave_grace = 0
-        self._pending_button = None
-        self._pending_at = 0.0
-        return released
+        self._thumb_fold = 0
+        self._middle_fold = 0
+        self._seq = "idle"
+        self.arm_hint = "Pointer: open hand to arm"
 
     def _scale(self, current_palm_px: float) -> float:
         return self.base_sensitivity * self.distance_ratio(current_palm_px)
 
-    def _fast_fist_toggle(self) -> bool:
-        """True on a very fast open + closed fist that lands on the pointing pose."""
-        if self._toggle_cooldown > 0:
-            return False
-        poses = list(self._poses)
-        if len(poses) < 3 or poses[-1] != "point":
-            return False
-        prior = poses[:-1]
-        if "fist" not in prior or "open" not in prior:
-            return False
-        non_point = [pose for pose in prior if pose != "point"]
-        return bool(non_point) and non_point[-1] == "fist"
-
     def _begin(self) -> None:
         self.engaged = True
+        self._enter_count = self.confirm_frames
         self._clutch = True
         self._filtered = None
         self._prev = None
         self._leave_grace = 0
-        self._toggle_cooldown = TOGGLE_COOLDOWN
-        self._pending_button = None
-        self._pending_at = 0.0
+        self._thumb_fold = 0
+        self._middle_fold = 0
+        self._seq = "idle"
+        self.arm_hint = "Pointer"
 
-    def _contact(self, distance: float, button: str) -> bool:
-        sticky = self.held_button == button or self._pending_button == button
-        return distance <= (CLICK_OFF if sticky else CLICK_ON)
+    def _click_from_folds(self, down: set[str]) -> Optional[str]:
+        """Thumb fold → left click; middle fold → right click. Edge-triggered."""
+        click = None
+        if "thumb" in down:
+            self._thumb_fold += 1
+            if self._thumb_fold == CLICK_CONFIRM:
+                click = "left"
+        else:
+            self._thumb_fold = 0
 
-    def _update_click(
-        self, hand_landmarks, *, allow_press: bool = True
-    ) -> tuple[Optional[str], Optional[str], Optional[str]]:
-        ring = thumb_to_ring_side(hand_landmarks)
-        index = thumb_to_index_side(hand_landmarks)
-        left_hit = self._contact(ring, "left")
-        right_hit = self._contact(index, "right")
-        active = self.held_button or self._pending_button
-        button_down: Optional[str] = None
-        button_up: Optional[str] = None
-        click: Optional[str] = None
+        if "middle" in down:
+            self._middle_fold += 1
+            if self._middle_fold == CLICK_CONFIRM and click is None:
+                click = "right"
+        else:
+            self._middle_fold = 0
+        return click
 
-        def still_on(button: str) -> bool:
-            if button == "left":
-                return left_hit
-            if button == "right":
-                return right_hit
+    def _arm_sequence(self, down: set[str]) -> bool:
+        """Advance open → fist → pointer pose. Returns True when control should start."""
+        if _is_open(down):
+            self._seq = "open"
+            self._enter_count = 0
+            self.arm_hint = "Pointer: fist next"
             return False
-
-        if active:
-            if still_on(active):
-                if (
-                    self.held_button is None
-                    and time.monotonic() - self._pending_at >= HOLD_CLICK
-                ):
-                    self.held_button = active
-                    self._pending_button = None
-                    button_down = active
+        if _is_fist(down):
+            if self._seq in ("open", "fist"):
+                self._seq = "fist"
+                self._enter_count = 0
+                self.arm_hint = "Pointer: index, middle, thumb out"
             else:
-                if self.held_button:
-                    button_up = self.held_button
-                    self.held_button = None
-                elif self._pending_button:
-                    click = self._pending_button
-                self._pending_button = None
-        elif allow_press:
-            if left_hit and right_hit:
-                target = "left" if ring <= index else "right"
-            elif left_hit:
-                target = "left"
-            elif right_hit:
-                target = "right"
-            else:
-                target = None
-            if target:
-                self._pending_button = target
-                self._pending_at = time.monotonic()
-        return button_down, button_up, click
+                self.arm_hint = "Pointer: open hand first"
+            return False
+        if _is_move(down):
+            if self._seq != "fist":
+                self._enter_count = 0
+                self.arm_hint = "Pointer: open → fist first"
+                return False
+            self._enter_count += 1
+            self.arm_hint = "Pointer: hold pose"
+            if self._enter_count >= self.confirm_frames:
+                return True
+            return False
+        self._enter_count = 0
+        if self._seq == "fist":
+            self.arm_hint = "Pointer: index, middle, thumb out"
+        elif self._seq == "open":
+            self.arm_hint = "Pointer: fist next"
+        else:
+            self.arm_hint = "Pointer: open hand to arm"
+        return False
 
     def update(self, hand_landmarks, fingers_down: list[str], frame_size) -> CursorUpdate:
         width, height = frame_size
         down = set(fingers_down)
         move = _is_move(down)
-
-        if self._toggle_cooldown > 0:
-            self._toggle_cooldown -= 1
-
-        self._poses.append(_pose_name(down))
-        if self._fast_fist_toggle():
-            if self.engaged:
-                released = self.reset()
-                self._toggle_cooldown = TOGGLE_COOLDOWN
-                return CursorUpdate(False, 0.0, 0.0, None, released)
-            self._begin()
+        hold = _is_pointer_hold(down)
 
         if not self.engaged:
-            return CursorUpdate(False, 0.0, 0.0, None, None)
+            if self._arm_sequence(down):
+                self._begin()
+            if not self.engaged:
+                return CursorUpdate(False, 0.0, 0.0)
 
-        if not move:
+        if not hold:
             self._leave_grace += 1
             if self._leave_grace >= LEAVE_GRACE:
-                released = self.reset()
-                return CursorUpdate(False, 0.0, 0.0, None, released)
+                self.reset()
+                return CursorUpdate(False, 0.0, 0.0)
             self._clutch = True
-            _, button_up, click = self._update_click(hand_landmarks, allow_press=False)
-            return CursorUpdate(True, 0.0, 0.0, None, button_up, click)
+            return CursorUpdate(True, 0.0, 0.0)
 
         self._leave_grace = 0
+        click = self._click_from_folds(down)
+
+        if not move:
+            self._clutch = True
+            return CursorUpdate(True, 0.0, 0.0, click)
 
         raw = index_tip_px(hand_landmarks, width, height)
         palm = palm_size_px(hand_landmarks, width, height)
@@ -344,5 +328,4 @@ class PointerCursor:
             if math.hypot(dx, dy) < deadzone:
                 dx = dy = 0.0
 
-        button_down, button_up, click = self._update_click(hand_landmarks)
-        return CursorUpdate(True, dx, dy, button_down, button_up, click)
+        return CursorUpdate(True, dx, dy, click)
