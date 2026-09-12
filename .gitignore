@@ -14,4 +14,5 @@ profiles.db
 profiles/
 models/*.onnx
 models/*.onnx.tmp
+simplified/
 

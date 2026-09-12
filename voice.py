@@ -40,7 +40,8 @@ URL = f"wss://api.x.ai/v1/realtime?model={MODEL}"
 VOICE_INSTRUCTIONS = (
     INSTRUCTIONS
     + "\nOnly call tools if this user turn includes the wake phrase "
-    + '"hey grok". If it does not, do not call tools.'
+    + '"hey grok". If it does not, do not call tools. '
+    + "If they ask to simplify this page or make it easier to read, call simplify_page."
 )
 
 
@@ -53,6 +54,23 @@ def contains_wake(text: str) -> bool:
 def strip_wake(text: str) -> str:
     cleaned = re.sub(r"(?i)hey\s+grok[,.!]?", " ", text)
     return re.sub(r"\s+", " ", cleaned).strip()
+
+
+def is_simplify_command(text: str) -> bool:
+    if not contains_wake(text):
+        return False
+    rest = re.sub(r"[^a-z0-9\s]", " ", strip_wake(text).lower())
+    rest = re.sub(r"\s+", " ", rest).strip()
+    return any(
+        needle in rest
+        for needle in (
+            "simplify this",
+            "simplify the page",
+            "simplify this page",
+            "make this easier",
+            "simplify",
+        )
+    )
 
 
 def _api_key() -> str:
@@ -124,7 +142,7 @@ async def run_realtime(key: str) -> None:
                                 "transcription": {
                                     "model": "grok-transcribe",
                                     "language_hint": "en",
-                                    "keyterms": ["hey Grok", "Grok"],
+                                    "keyterms": ["hey Grok", "Grok", "simplify"],
                                 },
                             },
                             "output": {
@@ -339,6 +357,13 @@ def run_stt_fallback(key: str) -> None:
         print(f"You: {text or '(empty)'}")
         if not contains_wake(text):
             print('Need the wake phrase "hey grok" first.')
+            continue
+        if is_simplify_command(text):
+            from simplify import simplify_current_page
+
+            print("Making a diagram of the current page…")
+            result = simplify_current_page(strip_wake(text) or "Simplify this page.")
+            print(f"Grok said: {result}")
             continue
         command = strip_wake(text) or text
         reply = run_instruction(command)

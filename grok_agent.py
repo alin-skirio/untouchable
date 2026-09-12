@@ -22,6 +22,8 @@ Break every request into keyboard, mouse, and app steps.
 Prefer shortcuts such as command+t, command+l, command+f, command+tab.
 If the user wants a new Apple Note, call make_new_note. Do not use Spotlight.
 Call get_context when you are unsure what is focused.
+If they ask to simplify this, make this easier to read, or remake the current
+page, call simplify_page and do not click around the site.
 Do not invent site-specific tools. After actions, say briefly what you did.
 """
 
@@ -137,6 +139,23 @@ TOOLS = [
             "required": ["lines"],
         },
     },
+    {
+        "type": "function",
+        "name": "simplify_page",
+        "description": (
+            "Read the current Zen, Safari, or Chrome page and generate a Grok Imagine "
+            "diagram that simplifies it (recipe steps, key facts, and similar)."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "ask": {
+                    "type": "string",
+                    "description": "What to emphasize, such as simplify this recipe.",
+                },
+            },
+        },
+    },
 ]
 
 
@@ -180,6 +199,10 @@ def _run_tool(name: str, arguments: dict) -> dict:
         )
     if name == "scroll":
         return computer.scroll(int(arguments["lines"]))
+    if name == "simplify_page":
+        from simplify import simplify_current_page
+
+        return simplify_current_page(str(arguments.get("ask") or ""))
     return {"ok": False, "error": f"Unknown tool: {name}"}
 
 
