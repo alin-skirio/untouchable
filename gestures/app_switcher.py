@@ -1,34 +1,8 @@
-"""Hand gesture helpers."""
+"""App switcher gesture: hold thumb+middle (⌘) and tap index (Tab)."""
 
 from __future__ import annotations
 
-import math
-from collections import deque
-
-THUMB_TIP = 4
-INDEX_TIP = 8
-MIDDLE_TIP = 12
-WRIST = 0
-MIDDLE_MCP = 9
-
-
-def _dist2(a, b) -> float:
-    return math.hypot(a.x - b.x, a.y - b.y)
-
-
-def triple_pinch_span(hand_landmarks) -> float:
-    """Largest pairwise distance among thumb, index, and middle tips, in palm units."""
-    lm = hand_landmarks.landmark
-    palm = _dist2(lm[WRIST], lm[MIDDLE_MCP])
-    if palm < 0.04:
-        palm = 0.04
-    thumb, index, middle = lm[THUMB_TIP], lm[INDEX_TIP], lm[MIDDLE_TIP]
-    span = max(
-        _dist2(thumb, index),
-        _dist2(thumb, middle),
-        _dist2(index, middle),
-    )
-    return span / palm
+from .landmarks import INDEX_TIP, MIDDLE_MCP, MIDDLE_TIP, THUMB_TIP, WRIST, dist2
 
 
 class AppSwitcher:
@@ -63,24 +37,24 @@ class AppSwitcher:
 
     def update(self, hand_landmarks) -> tuple[bool, bool, bool]:
         lm = hand_landmarks.landmark
-        palm = max(_dist2(lm[WRIST], lm[MIDDLE_MCP]), 0.04)
+        palm = max(dist2(lm[WRIST], lm[MIDDLE_MCP]), 0.04)
 
         # --- NEW: Check if hand is facing the camera ---
         # Measure 2D distance between Index MCP (knuckle 5) and Pinky MCP (knuckle 17)
         INDEX_MCP, PINKY_MCP = 5, 17
-        hand_width = _dist2(lm[INDEX_MCP], lm[PINKY_MCP]) / palm
+        hand_width = dist2(lm[INDEX_MCP], lm[PINKY_MCP]) / palm
         is_sideways = hand_width < self.min_hand_width
 
         # Distances between key active fingers (thumb, index, middle)
-        tm_dist = _dist2(lm[THUMB_TIP], lm[MIDDLE_TIP]) / palm
+        tm_dist = dist2(lm[THUMB_TIP], lm[MIDDLE_TIP]) / palm
         index_dist = min(
-            _dist2(lm[THUMB_TIP], lm[INDEX_TIP]),
-            _dist2(lm[MIDDLE_TIP], lm[INDEX_TIP]),
+            dist2(lm[THUMB_TIP], lm[INDEX_TIP]),
+            dist2(lm[MIDDLE_TIP], lm[INDEX_TIP]),
         ) / palm
 
         # Distance checks relative to wrist using ONLY thumb and middle finger
-        thumb_wrist = _dist2(lm[THUMB_TIP], lm[WRIST]) / palm
-        middle_wrist = _dist2(lm[MIDDLE_TIP], lm[WRIST]) / palm
+        thumb_wrist = dist2(lm[THUMB_TIP], lm[WRIST]) / palm
+        middle_wrist = dist2(lm[MIDDLE_TIP], lm[WRIST]) / palm
 
         # In a closed fist, the active fingertips collapse tightly toward the wrist
         is_fist = (thumb_wrist < self.min_wrist_dist) or (middle_wrist < 0.90)
@@ -111,37 +85,3 @@ class AppSwitcher:
                     tapped = True
 
         return started, tapped, ended
-
-
-
-class SwipeScroller:
-    """Triggers a scroll when the 4 main fingers quickly pop from a curled fist to fully extended."""
-    
-    def __init__(self, history_size: int = 10, scroll_amount: int = 150):
-        # 10 frames equals roughly a third of a second for the motion to happen
-        self.history = deque(maxlen=history_size)
-        self.scroll_amount = scroll_amount
-        self.cooldown = 0
-
-    def update(self, hand_landmarks, fingers_down: list[str]) -> int:
-        if self.cooldown > 0:
-            self.cooldown -= 1
-            return 0
-
-        # 1. Count how many of the 4 main fingers are currently curled (down)
-        main_fingers = {"index", "middle", "ring", "pinky"}
-        down_count = len(main_fingers.intersection(set(fingers_down)))
-        self.history.append(down_count)
-
-        # 2. Check if the hand is fully open right now (0 main fingers down)
-        if down_count == 0:
-            # 3. Look back in recent history to see if it was a fist (>= 3 fingers down)
-            if len(self.history) >= 3 and max(self.history) >= 3:
-                self.history.clear()
-                self.cooldown = 20  # Pause to prevent multiple scrolls from one action
-                return self.scroll_amount
-
-        return 0
-
-
-

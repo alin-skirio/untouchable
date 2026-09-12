@@ -26,7 +26,8 @@ from collections import deque
 import cv2
 import mediapipe as mp
 
-from gestures import AppSwitcher, SwipeScroller
+from gestures.app_switcher import AppSwitcher
+from gestures.swipe_scroller import SwipeScroller
 from mac_keys import async_cmd, async_tap_tab, set_cmd_state, smooth_scroll
 
 TRAIL_LENGTH = 24
