@@ -9,7 +9,6 @@ from .pose import (
     fingers_in_line,
     four_finger_width,
     four_finger_y,
-    four_fingers_open,
     palm_reach,
     palm_size,
     pointing_up,
@@ -34,7 +33,7 @@ class Scrolling:
     Then, still with the fingers in that line:
       - fist → fingertips at max palm reach, pointing up → ScrollUp (one page)
       - repeat that fist → expanded cycle to page up again
-      - pop the four fingers open while dropping them → ScrollDown
+      - point the pinky up → ScrollDown (also works before the 10s hold)
     """
 
     def __init__(
@@ -52,7 +51,7 @@ class Scrolling:
         self.cooldown_frames = cooldown_frames
         self.scroll_amount = scroll_amount
         self.scroll_up = ScrollUp()
-        self.scroll_down = ScrollDown(width_increase=width_increase)
+        self.scroll_down = ScrollDown(scroll_amount=scroll_amount)
 
         self.active = False
         self.fist_started_at: float | None = None
@@ -70,10 +69,18 @@ class Scrolling:
         self.last_action = None
         self.hold_seconds = 0.0
         self.scroll_up.reset()
+        self.scroll_down.reset()
 
     def update(self, hand_landmarks, fingers_down: list[str]) -> str | None:
         """Return 'up', 'down', or None."""
         self.last_action = None
+
+        down_lines = self.scroll_down.update(hand_landmarks, fingers_down)
+        if down_lines > 0:
+            self.last_action = "down"
+            self.scroll_amount = down_lines
+            return "down"
+
         if self.cooldown > 0:
             self.cooldown -= 1
             return None
@@ -82,7 +89,6 @@ class Scrolling:
         palm = palm_size(lm)
         in_line = fingers_in_line(lm, palm, self.together, self.line_dev)
         in_fist = all_fingers_down(fingers_down) and in_line
-        opened = four_fingers_open(fingers_down)
         width = four_finger_width(lm, palm)
         tip_y = four_finger_y(lm)
         reach = palm_reach(lm, palm)
@@ -123,13 +129,5 @@ class Scrolling:
             self.last_action = "up"
             self.cooldown = self.cooldown_frames
             return "up"
-
-        if not in_fist:
-            width_delta = width - self.fist_width
-            travel_y = tip_y - self.fist_y
-            if self.scroll_down.triggered(opened, width_delta, travel_y, in_line):
-                self.last_action = "down"
-                self.cooldown = self.cooldown_frames
-                return "down"
 
         return None

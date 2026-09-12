@@ -24,6 +24,7 @@ ADJACENT_TIPS = (
     (RING_TIP, PINKY_TIP),
 )
 FOUR_TIPS = (INDEX_TIP, MIDDLE_TIP, RING_TIP, PINKY_TIP)
+PINKY_MCP = 17
 
 
 def palm_size(lm) -> float:
@@ -94,3 +95,13 @@ def pointing_up(lm) -> bool:
     _, cy = palm_center(lm)
     tip_y = sum(lm[i].y for i in ALL_TIPS) / len(ALL_TIPS)
     return tip_y < cy - 0.03
+
+
+def pinky_pointing_up(lm, fingers_down: list[str]) -> bool:
+    """True when the pinky is extended and its tip sits above the palm and knuckle."""
+    if "pinky" in fingers_down:
+        return False
+    _, cy = palm_center(lm)
+    tip = lm[PINKY_TIP]
+    knuckle = lm[PINKY_MCP]
+    return tip.y < cy - 0.03 and tip.y < knuckle.y

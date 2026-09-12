@@ -14,7 +14,7 @@ Make a tight right fist with all five fingertips in a straight line
 (neighbor distances near zero) and hold it for 10 seconds to enter
 Scrolling. Keep that line, then open the fist until the fingers point
 up at max palm reach to ScrollUp one page. Close to a fist and open
-again to page up again. Drop the open fingers to ScrollDown.
+again to page up again. Point the pinky up to ScrollDown.
 
 Point index+middle with ring+pinky curled to move the macOS cursor.
 Curl index+middle to left-drag; add a pointed thumb to right-drag.

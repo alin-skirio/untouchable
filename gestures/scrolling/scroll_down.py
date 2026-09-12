@@ -1,17 +1,29 @@
-"""ScrollDown: inside Scrolling, pop the four fingers open and drop them."""
+"""ScrollDown: page-scroll down while the pinky is pointing up."""
+
+from __future__ import annotations
+
+from .pose import pinky_pointing_up
 
 
 class ScrollDown:
-    def __init__(self, width_increase: float = 0.28, min_down: float = 0.035):
-        self.width_increase = width_increase
-        self.min_down = min_down
+    def __init__(self, scroll_amount: int = 150, cooldown_frames: int = 18):
+        self.scroll_amount = scroll_amount
+        self.cooldown_frames = cooldown_frames
+        self.cooldown = 0
 
-    def triggered(
-        self, four_open: bool, width_delta: float, travel_y: float, in_line: bool
-    ) -> bool:
-        return (
-            in_line
-            and four_open
-            and width_delta >= self.width_increase
-            and travel_y >= self.min_down
-        )
+    def reset(self) -> None:
+        self.cooldown = 0
+
+    def update(self, hand_landmarks, fingers_down: list[str]) -> int:
+        """Return lines to scroll down this frame while the pinky stays up."""
+        if self.cooldown > 0:
+            self.cooldown -= 1
+
+        if not pinky_pointing_up(hand_landmarks.landmark, fingers_down):
+            return 0
+
+        if self.cooldown > 0:
+            return 0
+
+        self.cooldown = self.cooldown_frames
+        return self.scroll_amount
