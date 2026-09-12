@@ -1,7 +1,7 @@
 """Desk overlay: ephemeral intro frost, then optional HUD chrome.
 
-A thin localhost page is shown in a transparent WKWebView (macOS). Python owns
-the state machine so H / Esc / click / timeout stay consistent with track.py.
+macOS draws frost cards with the same NSPanel + NSVisualEffectView host that
+already showed the welcome pill. Python owns the state machine.
 """
 
 from __future__ import annotations
@@ -16,13 +16,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
-from chrome import display_name
-
 ROOT = Path(__file__).resolve().parent
-HOST = ROOT / "overlay_host.jxa"
+HOST = ROOT / "overlay_host.applescript"
 PAGE = ROOT / "overlay_hud.html"
 VOICE_PATH = ROOT / ".voice.json"
 STATE_PATH = ROOT / ".overlay.json"
+STATE_TXT = ROOT / ".overlay.txt"
 EVENT_PATH = ROOT / ".overlay.event"
 LOG_PATH = ROOT / ".overlay.host.log"
 INTRO_SEC = 2.5
@@ -52,6 +51,15 @@ _state = {
 
 _intro_started = 0.0
 _started = False
+
+
+def display_name(name: str, limit: int = 28) -> str:
+    cleaned = " ".join(str(name or "").split())
+    if not cleaned:
+        return ""
+    if cleaned == cleaned.lower():
+        cleaned = cleaned.title()
+    return cleaned[:limit]
 
 
 def _voice_listening() -> bool:
@@ -93,20 +101,41 @@ def _write_state() -> None:
         tmp.replace(STATE_PATH)
     except OSError:
         pass
+    locked = payload.get("mode") == "locked" or not payload.get("unlocked", True)
+    lines = (
+        f"intro={'1' if payload.get('intro') else '0'}",
+        f"hud={'1' if payload.get('hud') else '0'}",
+        f"locked={'1' if locked else '0'}",
+        f"name={payload.get('display_name') or payload.get('name') or ''}",
+        f"voice={'1' if payload.get('voice') else '0'}",
+        f"pointer={'1' if payload.get('pointer') else '0'}",
+        f"quit={'1' if payload.get('quit') else '0'}",
+    )
+    try:
+        STATE_TXT.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    except OSError:
+        pass
 
 
 def _drain_events() -> None:
     if not EVENT_PATH.is_file():
         return
     try:
-        payload = json.loads(EVENT_PATH.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        payload = {}
+        raw = EVENT_PATH.read_text(encoding="utf-8").strip()
+    except OSError:
+        return
     try:
         EVENT_PATH.unlink(missing_ok=True)
     except OSError:
         pass
-    event = str(payload.get("type") or "")
+    event = ""
+    if raw.startswith("{"):
+        try:
+            event = str(json.loads(raw).get("type") or "")
+        except json.JSONDecodeError:
+            event = ""
+    elif raw.startswith("type="):
+        event = raw.split("=", 1)[-1].strip()
     if event:
         apply_event(event)
 
@@ -209,29 +238,20 @@ def _start_host() -> None:
     if not HOST.is_file():
         print("Overlay host script is missing; desk HUD will not draw.")
         return
-    log = None
     try:
         log = LOG_PATH.open("w", encoding="utf-8")
         _proc = subprocess.Popen(
-            [
-                "osascript",
-                "-l",
-                "JavaScript",
-                str(HOST),
-                str(STATE_PATH),
-                str(EVENT_PATH),
-                str(LOG_PATH),
-            ],
-            stdout=log,
-            stderr=log,
+            ["osascript", str(HOST), str(STATE_TXT), str(EVENT_PATH)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
         )
     except OSError as exc:
         print(f"Could not start overlay host: {exc}")
         _proc = None
-        if log is not None:
-            log.close()
         return
-    time.sleep(0.25)
+    threading.Thread(target=_echo_host, args=(_proc, log), name="overlay-host-log", daemon=True).start()
+    time.sleep(0.35)
     if _proc is not None and _proc.poll() is not None:
         detail = ""
         try:
@@ -240,6 +260,25 @@ def _start_host() -> None:
             detail = f"exit {_proc.returncode}"
         print(f"Overlay host exited immediately ({detail or 'no log'}). Desk HUD will not draw.")
         _proc = None
+
+
+def _echo_host(proc: subprocess.Popen, log) -> None:
+    try:
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            text = line.rstrip()
+            if text:
+                print(f"[overlay] {text}")
+                try:
+                    log.write(text + "\n")
+                    log.flush()
+                except OSError:
+                    pass
+    finally:
+        try:
+            log.close()
+        except OSError:
+            pass
 
 
 def server_url() -> str:
@@ -367,7 +406,7 @@ def stop() -> None:
     _started = False
     _port = 0
     _intro_started = 0.0
-    for path in (STATE_PATH, EVENT_PATH):
+    for path in (STATE_PATH, STATE_TXT, EVENT_PATH):
         try:
             path.unlink(missing_ok=True)
         except OSError:
