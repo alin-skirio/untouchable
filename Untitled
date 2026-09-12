@@ -1,0 +1,3 @@
+cd ~/hand-control
+source .venv/bin/activate
+python voice.py
