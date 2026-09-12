@@ -13,9 +13,8 @@ hand_reference.json
 profiles.db
 profiles/
 models/*.onnx
+simplified/
+.presence.json
 models/*.onnx.tmp
 simplified/
-handoffs/*.md
-handoffs/*.png
-.presence.json
 

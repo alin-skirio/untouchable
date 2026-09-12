@@ -137,8 +137,23 @@ def draw_trail(frame, trail: deque[tuple[int, int]], color) -> None:
         return
     points = list(trail)
     for i in range(1, len(points)):
-        thickness = max(1, int(3 * i / len(points)))
+        thickness = max(1, int(6 * i / len(points)))
         cv2.line(frame, points[i - 1], points[i], color, thickness, cv2.LINE_AA)
+
+
+def draw_tip(frame, point: tuple[int, int], color, label: str) -> None:
+    cv2.circle(frame, point, 16, color, 2)
+    cv2.circle(frame, point, 5, color, -1)
+    cv2.putText(
+        frame,
+        label,
+        (point[0] + 14, point[1] - 14),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.55,
+        color,
+        2,
+        cv2.LINE_AA,
+    )
 
 
 def parse_args() -> argparse.Namespace:
@@ -219,9 +234,9 @@ def main() -> None:
     )
     if hud.preview:
         open_camera_window(hud)
-        print("Hide camera tucks the preview away. People manages faces. Quit exits.")
+        print("Peach circle hides the camera. Rose circle quits.")
     else:
-        print("Show camera brings the preview back. Quit exits.")
+        print("Peach circle shows the camera. Rose circle quits.")
         open_rail(hud)
     preview_opened_at = time.monotonic() if hud.preview else 0.0
 
@@ -485,22 +500,7 @@ def main() -> None:
             key_snap = False
             if action == "quit":
                 break
-            if action == "add_face":
-                hud.close_faces()
-                if hud.on("face") and not face_id.enrolling:
-                    name_ui.open()
-            elif action == "confirm_delete":
-                doomed = hud.confirm_name
-                if doomed:
-                    face_id.delete_profile(doomed)
-                    hud.set_faces(face_id.list_names())
-            elif action == "snap_cursor":
-                key_snap = True
-            elif action == "toggle_faces" and (face_id.enrolling or name_ui.active):
-                pass
-            elif action:
-                if action == "toggle_faces":
-                    hud.set_faces(face_id.list_names())
+            if action:
                 was_preview = hud.preview
                 hud.apply(action)
                 if hud.preview and not was_preview:
@@ -508,18 +508,22 @@ def main() -> None:
                     preview_opened_at = time.monotonic()
                 elif was_preview and not hud.preview:
                     name_ui.close()
-                    hud.close_faces()
                     try:
                         cv2.destroyWindow(CAM_WINDOW)
                     except cv2.error:
                         pass
             if not seen and not face_id.enrolling and "No hands in view" not in status_lines:
                 status_lines.append("No hands in view")
+            status_lines.append("Hold Right thumb+middle & tap index = ⌘Tab cycle")
+            status_lines.append("S = place cursor on index tip")
+            status_lines.append("Open → fist → index+middle+thumb out = pointer")
+            status_lines.append("Pointer: thumb fold = left click, middle fold = right click")
+            status_lines.append("Two flat hands in a T = TikTok mode on/off")
 
             if not hud.preview:
                 if not window_open(RAIL_WINDOW):
                     open_rail(hud)
-                hud.draw_rail(status_lines)
+                hud.draw_rail()
             elif window_open(RAIL_WINDOW):
                 try:
                     cv2.destroyWindow(RAIL_WINDOW)
@@ -536,12 +540,11 @@ def main() -> None:
                 ):
                     hud.preview = False
                     name_ui.close()
-                    hud.close_faces()
                     try:
                         cv2.destroyWindow(CAM_WINDOW)
                     except cv2.error:
                         pass
-                    print("Camera hidden. Show brings it back.")
+                    print("Camera hidden. Peach circle brings it back.")
 
             key = cv2.waitKey(1) & 0xFF
             if not hud.preview:
@@ -553,31 +556,6 @@ def main() -> None:
                 if isinstance(result, str):
                     face_id.begin_enroll(result)
                 # False = cancelled; None = still typing
-                continue
-            if hud.faces_open:
-                if key == 27:
-                    hud.close_faces()
-                elif key in (ord("a"), ord("A")):
-                    hud.close_faces()
-                    if hud.on("face") and not face_id.enrolling:
-                        name_ui.open()
-                elif key in (ord("d"), ord("D"), 8, 127):
-                    if hud.confirm_name:
-                        face_id.delete_profile(hud.confirm_name)
-                        hud.set_faces(face_id.list_names())
-                    elif hud.faces:
-                        hud.apply("ask_delete")
-                elif key in (13, 10) and hud.confirm_name:
-                    face_id.delete_profile(hud.confirm_name)
-                    hud.set_faces(face_id.list_names())
-                elif key in (82,):  # up
-                    if hud.faces:
-                        hud.faces_sel = (hud.faces_sel - 1) % len(hud.faces)
-                        hud.confirm_name = None
-                elif key in (84,):  # down
-                    if hud.faces:
-                        hud.faces_sel = (hud.faces_sel + 1) % len(hud.faces)
-                        hud.confirm_name = None
                 continue
             if key in (ord("q"),):
                 break
@@ -616,8 +594,11 @@ def main() -> None:
                 if hud.on("face") and not face_id.enrolling:
                     name_ui.open()
             elif key in (ord("l"), ord("L")):
-                hud.set_faces(face_id.list_names())
-                hud.faces_open = True
+                names = face_id.list_names()
+                if names:
+                    print("Saved face profiles: " + ", ".join(names))
+                else:
+                    print("No face profiles yet. Press A to add one.")
     finally:
         presence.clear()
         release_mouse()

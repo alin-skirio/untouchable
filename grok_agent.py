@@ -24,11 +24,6 @@ If the user wants a new Apple Note, call make_new_note. Do not use Spotlight.
 Call get_context when you are unsure what is focused.
 If they ask to simplify this, make this easier to read, or remake the current
 page, call simplify_page and do not click around the site.
-If they say send this off to desk, send this to Desk, hand this off, or
-task DESK, call handoff_to_desk once. Put only the work after "and" in ask
-(for example the sentence after "send this off to desk and"). The tool
-captures the screen and the current site; do not screenshot or click Grok Bot
-yourself.
 Do not invent site-specific tools. After actions, say briefly what you did.
 """
 
@@ -161,27 +156,6 @@ TOOLS = [
             },
         },
     },
-    {
-        "type": "function",
-        "name": "handoff_to_desk",
-        "description": (
-            "Capture the Mac screen and current website, then send that packet to "
-            "the Grok Bot named DESK so DESK can assign a specialist in the group chat."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "ask": {
-                    "type": "string",
-                    "description": (
-                        "Only the work to do, the clause after 'and'. "
-                        "Example: 'send this off to desk and keep gathering sources' "
-                        "→ ask 'gathering sources'."
-                    ),
-                },
-            },
-        },
-    },
 ]
 
 
@@ -229,10 +203,6 @@ def _run_tool(name: str, arguments: dict) -> dict:
         from simplify import simplify_current_page
 
         return simplify_current_page(str(arguments.get("ask") or ""))
-    if name == "handoff_to_desk":
-        from handoff import handoff_to_desk
-
-        return handoff_to_desk(str(arguments.get("ask") or ""))
     return {"ok": False, "error": f"Unknown tool: {name}"}
 
 

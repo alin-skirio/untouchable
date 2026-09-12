@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import cv2
 
-ENGAGE_BGR = (210, 190, 40)
-RELEASE_BGR = (80, 80, 80)
+ENGAGE_BGR = (255, 220, 80)
+RELEASE_BGR = (80, 138, 255)
 
 
 def flash_pointer_rim(_engage: bool) -> None:
@@ -17,12 +17,12 @@ def draw_pointer_bezel(frame, engaged: bool) -> None:
     if frame is None or not engaged:
         return
     height, width = frame.shape[:2]
-    inset = 6
+    inset = 8
     cv2.rectangle(
         frame,
         (inset, inset),
         (width - inset - 1, height - inset - 1),
         ENGAGE_BGR,
-        1,
+        3,
         cv2.LINE_AA,
     )
