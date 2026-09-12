@@ -29,7 +29,7 @@ from collections import deque
 import cv2
 import mediapipe as mp
 
-from faceid import FaceID, open_camera, prompt_name
+from faceid import FaceID, NameEntryUI, open_camera
 from gestures.app_switcher import AppSwitcher
 from gestures.swipe_scroller import SwipeScroller
 from mac_keys import async_cmd, async_tap_tab, set_cmd_state, smooth_scroll
@@ -180,6 +180,7 @@ def main() -> None:
         min_tracking_confidence=0.75,
     )
     face_id = FaceID()
+    name_ui = NameEntryUI()
     cap = open_camera(preferred=args.camera)
     trails: dict[str, deque[tuple[int, int]]] = {
         "Left": deque(maxlen=TRAIL_LENGTH),
@@ -206,7 +207,7 @@ def main() -> None:
         cv2.namedWindow(window, cv2.WINDOW_NORMAL)
         print(
             "Same camera for hands + face. "
-            "A = add face profile, L = list, Q/Esc or Ctrl+C to quit."
+            "A = add face profile (type name in the window), L = list, Q/Esc or Ctrl+C to quit."
         )
     else:
         print("Running without a preview. Hold thumb+middle & tap index to cycle apps. Ctrl+C to quit.")
@@ -340,14 +341,22 @@ def main() -> None:
 
             if preview:
                 draw_hud(frame, status_lines)
+                name_ui.draw(frame)
                 cv2.imshow(window, frame)
                 visible = cv2.getWindowProperty(window, cv2.WND_PROP_VISIBLE)
                 if visible < 1:
                     preview = False
+                    name_ui.close()
                     cv2.destroyAllWindows()
                     print("Preview closed. Tracking still running in the background. Ctrl+C to quit.")
                 else:
                     key = cv2.waitKey(1) & 0xFF
+                    if name_ui.active:
+                        result = name_ui.handle_key(key)
+                        if isinstance(result, str):
+                            face_id.begin_enroll(result)
+                        # False = cancelled; None = still typing
+                        continue
                     if key in (ord("q"),):
                         break
                     if key == 27:  # Esc
@@ -357,9 +366,7 @@ def main() -> None:
                             break
                     elif key in (ord("a"), ord("A")):
                         if not face_id.enrolling:
-                            name = prompt_name()
-                            if name:
-                                face_id.begin_enroll(name)
+                            name_ui.open()
                     elif key in (ord("l"), ord("L")):
                         names = face_id.list_names()
                         if names:

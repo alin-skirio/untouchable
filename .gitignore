@@ -8,3 +8,6 @@ __pycache__/
 .vscode/
 profiles.db
 profiles/
+models/*.onnx
+models/*.onnx.tmp
+
