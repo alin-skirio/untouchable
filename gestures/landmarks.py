@@ -11,9 +11,12 @@ RING_TIP = 16
 PINKY_TIP = 20
 WRIST = 0
 INDEX_MCP = 5
+INDEX_PIP = 6
+INDEX_DIP = 7
 MIDDLE_MCP = 9
 RING_MCP = 13
 RING_PIP = 14
+RING_DIP = 15
 PINKY_MCP = 17
 
 PALM_MIN = 0.04
@@ -50,13 +53,27 @@ def _point_to_segment(px: float, py: float, ax: float, ay: float, bx: float, by:
     return math.hypot(px - (ax + t * dx), py - (ay + t * dy))
 
 
-def thumb_to_ring_side(hand_landmarks) -> float:
-    """Thumb-tip distance to the RING_MCP→RING_PIP segment, in palm units."""
+def thumb_to_finger_side(hand_landmarks, mcp: int, pip: int, dip: int, tip: int) -> float:
+    """Thumb-tip distance to a finger's MCP→TIP shaft, in palm units."""
     lm = hand_landmarks.landmark
     thumb = lm[THUMB_TIP]
-    mcp = lm[RING_MCP]
-    pip = lm[RING_PIP]
-    return _point_to_segment(thumb.x, thumb.y, mcp.x, mcp.y, pip.x, pip.y) / palm_size(lm)
+    palm = palm_size(lm)
+    px, py = thumb.x, thumb.y
+    dist = min(
+        _point_to_segment(px, py, lm[a].x, lm[a].y, lm[b].x, lm[b].y)
+        for a, b in ((mcp, pip), (pip, dip), (dip, tip))
+    )
+    return dist / palm
+
+
+def thumb_to_ring_side(hand_landmarks) -> float:
+    """Thumb-tip distance to the curled ring-finger shaft, in palm units."""
+    return thumb_to_finger_side(hand_landmarks, RING_MCP, RING_PIP, RING_DIP, RING_TIP)
+
+
+def thumb_to_index_side(hand_landmarks) -> float:
+    """Thumb-tip distance to the pointing index-finger shaft, in palm units."""
+    return thumb_to_finger_side(hand_landmarks, INDEX_MCP, INDEX_PIP, INDEX_DIP, INDEX_TIP)
 
 
 def triple_pinch_span(hand_landmarks) -> float:

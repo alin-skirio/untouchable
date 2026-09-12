@@ -17,7 +17,8 @@ separate, it cancels. Point the pinky up to ScrollDown.
 
 Point index+middle with ring+pinky curled to move the macOS cursor from the index tip.
 A very fast open-and-close fist that lands on that pointing pose toggles tracking on or off.
-Press S to warp the cursor onto that fingertip. Touch thumb to the curled ring to left-click/drag.
+Press S to warp the cursor onto that fingertip. Tap thumb to the curled ring (<0.5s) to
+left-click, or hold to drag; tap the side of the pointing index to right-click.
 ⌘T captures a desk-distance reference; the Desk slider is base sensitivity.
 
 Close the preview or use --no-preview; Ctrl+C to quit.
@@ -53,6 +54,7 @@ from mac_keys import (
     smooth_scroll,
     start_cmd_t_monitor,
 )
+from rim_flash import flash_pointer_rim
 
 TRAIL_LENGTH = 24
 MAX_HANDS = 2
@@ -324,14 +326,15 @@ def main() -> None:
             if result.multi_hand_landmarks:
                 handedness_list = result.multi_handedness or []
                 for i, hand_landmarks in enumerate(result.multi_hand_landmarks):
-                    palm_px = palm_size_px(hand_landmarks, width, height)
-
-                    if palm_px < MIN_PALM_SIZE_PX:
-                        continue
-
                     label = "Hand"
                     if i < len(handedness_list):
                         label = handedness_list[i].classification[0].label
+
+                    palm_px = palm_size_px(hand_landmarks, width, height)
+                    if palm_px < MIN_PALM_SIZE_PX and not (
+                        pointer.engaged and label == "Right"
+                    ):
+                        continue
                     color = HAND_COLORS.get(label, DEFAULT_COLOR)
                     seen.add(label)
 
@@ -381,6 +384,9 @@ def main() -> None:
 
                         was_pointing = pointer.engaged
                         cursor = pointer.update(hand_landmarks, down, (width, height))
+                        if cursor.click:
+                            mouse_down(cursor.click)
+                            mouse_up(cursor.click)
                         if cursor.button_down:
                             mouse_down(cursor.button_down)
                         drag = pointer.held_button or cursor.button_up
@@ -388,6 +394,10 @@ def main() -> None:
                             move_mouse(cursor.dx, cursor.dy, dragging=drag)
                         if cursor.button_up:
                             mouse_up(cursor.button_up)
+                        if cursor.engaged and not was_pointing:
+                            flash_pointer_rim(True)
+                        elif was_pointing and not cursor.engaged:
+                            flash_pointer_rim(False)
 
                         if cursor.engaged:
                             scroll_up.reset()
@@ -395,6 +405,8 @@ def main() -> None:
                             scroller.reset()
                             if pointer.held_button == "left":
                                 status_lines.append("Left drag")
+                            elif pointer.held_button == "right":
+                                status_lines.append("Right drag")
                             else:
                                 status_lines.append("Pointer")
                         elif was_pointing:
@@ -458,10 +470,13 @@ def main() -> None:
 
             if not saw_right:
                 if pointer.engaged or pointer.held_button:
+                    was_engaged = pointer.engaged
                     released = pointer.reset()
                     if released:
                         mouse_up(released)
                     release_mouse()
+                    if was_engaged:
+                        flash_pointer_rim(False)
                 if switcher.active:
                     switcher.reset()
                     async_cmd(False)
@@ -507,7 +522,8 @@ def main() -> None:
             if last_ref_msg and time.monotonic() - last_ref_at < 1.5:
                 status_lines.append(last_ref_msg)
             status_lines.append("Hold Right thumb+middle & tap index = ⌘Tab cycle")
-            status_lines.append("S = place on index tip; thumb-to-ring = click")
+            status_lines.append("S = place on index tip; thumb-to-ring = left; thumb-to-index = right")
+            status_lines.append("Tap <0.5s clicks; hold longer to drag until you leave the finger")
             status_lines.append("Fast open+fist then point = toggle pointer")
 
             if preview:
@@ -534,9 +550,12 @@ def main() -> None:
                                     oy + ny * sh,
                                     dragging=pointer.held_button,
                                 )
+                                was_engaged = pointer.engaged
                                 pointer.engage_from_s()
                                 scrolling.reset()
                                 scroller.reset()
+                                if not was_engaged:
+                                    flash_pointer_rim(True)
                                 last_ref_msg = "Cursor on index tip"
                                 last_ref_at = time.monotonic()
                             else:
