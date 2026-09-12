@@ -21,7 +21,10 @@ Hold right thumb+ring+pinky down, keep index+middle up and together,
 and swipe up rapidly to scroll down dynamically based on swipe severity.
 
 Hold both hands flat and perpendicular so they form a T (one hand's palm
-against the other's fingertips) to open TikTok.
+against the other's fingertips) to open TikTok and enter TikTok mode. In
+that mode, flicking all fingertips up by a fraction of a calibrated palm
+(12px until ⌘T sets a reference) goes to the next video. Make the T again
+to close the tab and leave the mode.
 
 Face recognition runs on the same camera feed. Press A to add a named
 profile (saved in profiles.db), L to list profiles.
@@ -47,6 +50,7 @@ from gestures.cursor import PointerCursor
 from gestures.landmarks import INDEX_TIP, palm_size_px
 from gestures.scroll_down import ScrollDown
 from gestures.scroll_up import ScrollUp
+from gestures.flick_up import FlickUp, rise_threshold_px
 from gestures.swipe_scroller import SwipeScroller
 from gestures.t_pose import TPose
 from hud import (
@@ -59,6 +63,7 @@ from hud import (
 )
 from launcher import open_tiktok
 import presence
+from launcher import close_tiktok_tab, next_tiktok_video, open_tiktok
 from mac_keys import (
     async_cmd,
     async_tap_tab,
@@ -208,6 +213,8 @@ def main() -> None:
     scroller = SwipeScroller()
     pointer = PointerCursor()
     t_pose = TPose()
+    flick = FlickUp()
+    tiktok_mode = False
     cmd_t = start_cmd_t_monitor()
 
     last_cmd_tab_at = 0.0
@@ -296,6 +303,20 @@ def main() -> None:
                     current = active_finger.get(label, DEFAULT_FINGER)
                     down = fingers_down(hand_landmarks)
                     pose_hands.append((hand_landmarks, down))
+
+                    # t_pose.holding is last frame's value, which suppresses the
+                    # flick while hands are rising into a T to leave the mode.
+                    if tiktok_mode and not t_pose.holding:
+                        if flick.update(
+                            label,
+                            hand_landmarks,
+                            height,
+                            rise_threshold_px(pointer.ref_palm_px),
+                        ):
+                            threading.Thread(target=next_tiktok_video, daemon=True).start()
+                            last_action_msg = "Flick up → next video"
+                            last_action_at = time.monotonic()
+
                     if len(down) == 1:
                         candidate = down[0]
                         prev, count = pending.get(label, (candidate, 0))
@@ -424,13 +445,22 @@ def main() -> None:
 
             # Two flat hands held perpendicular (a "T") open TikTok.
             if not armed or pointer.engaged or not hud.on("t_pose"):
+            # Two flat hands held perpendicular (a "T") toggle TikTok mode.
+            if pointer.engaged:
                 t_pose.reset()
             elif t_pose.update(pose_hands, (width, height)):
-                threading.Thread(target=open_tiktok, daemon=True).start()
+                flick.reset()
+                if tiktok_mode:
+                    tiktok_mode = False
+                    threading.Thread(target=close_tiktok_tab, daemon=True).start()
+                    last_action_msg = "T pose → closed TikTok"
+                else:
+                    tiktok_mode = True
+                    threading.Thread(target=open_tiktok, daemon=True).start()
+                    last_action_msg = "T pose → TikTok mode on"
                 # An open hand after a fist also looks like a flick scroll.
                 scroller.reset()
                 scroll_down.reset()
-                last_action_msg = "T pose → TikTok"
                 last_action_at = time.monotonic()
                 print(last_action_msg)
 
@@ -439,6 +469,7 @@ def main() -> None:
                     trail.clear()
                     active_finger.pop(label, None)
                     pending.pop(label, None)
+                    flick.forget(label)
 
             if cmd_t.consume():
                 if not armed or switcher.active:
@@ -468,6 +499,11 @@ def main() -> None:
                 status_lines.append(last_ref_msg)
             if t_pose.holding:
                 status_lines.append("T pose held")
+            if tiktok_mode:
+                status_lines.append(
+                    f"TikTok mode · flick tips up {rise_threshold_px(pointer.ref_palm_px):.0f}px"
+                    " = next video"
+                )
             if last_action_msg and time.monotonic() - last_action_at < 1.5:
                 status_lines.append(last_action_msg)
             status_lines.append(f"Dist {pointer.distance_ratio(last_right_palm):.1f}x")
@@ -487,6 +523,13 @@ def main() -> None:
                         cv2.destroyWindow(CAM_WINDOW)
                     except cv2.error:
                         pass
+            if not seen and not face_id.enrolling and "No hands in view" not in status_lines:
+                status_lines.append("No hands in view")
+            status_lines.append("Hold Right thumb+middle & tap index = ⌘Tab cycle")
+            status_lines.append("S = place cursor on index tip")
+            status_lines.append("Open → fist → index+middle+thumb out = pointer")
+            status_lines.append("Pointer: thumb fold = left click, middle fold = right click")
+            status_lines.append("Two flat hands in a T = TikTok mode on/off")
 
             if not hud.preview:
                 if not window_open(RAIL_WINDOW):

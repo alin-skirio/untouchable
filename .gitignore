@@ -15,4 +15,6 @@ profiles/
 models/*.onnx
 simplified/
 .presence.json
+models/*.onnx.tmp
+simplified/
 
