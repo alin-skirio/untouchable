@@ -1,25 +1,25 @@
-"""ScrollDown gesture: smooth continuous page-scroll while the pinky is up."""
+"""ScrollDown gesture: smooth continuous page-scroll while the right pinky is up."""
 
 from __future__ import annotations
 
-from .pose import LINES_PER_FRAME, pinky_only_up
+from .pose import pinky_scroll_rate
 
 
 class ScrollDown:
-    def __init__(self, lines_per_frame: float = LINES_PER_FRAME):
-        self.lines_per_frame = lines_per_frame
+    def __init__(self):
         self.accrued = 0.0
 
     def reset(self) -> None:
         self.accrued = 0.0
 
     def update(self, hand_landmarks, fingers_down: list[str]) -> int:
-        """Return a small line count each frame the pinky stays pointing up."""
-        if not pinky_only_up(hand_landmarks.landmark, fingers_down):
+        """Return a small line count each frame the pinky-only pose is held."""
+        rate = pinky_scroll_rate(hand_landmarks.landmark, fingers_down)
+        if rate <= 0:
             self.accrued = 0.0
             return 0
 
-        self.accrued += self.lines_per_frame
+        self.accrued += rate
         lines = int(self.accrued)
         self.accrued -= lines
         return max(0, lines)
