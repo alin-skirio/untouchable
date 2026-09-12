@@ -16,9 +16,10 @@ Scrolling. Keep that line, then open the fist until the fingers point
 up at max palm reach to ScrollUp one page. Close to a fist and open
 again to page up again. Drop the open fingers to ScrollDown.
 
-Point index+middle with ring+pinky curled to move the macOS cursor.
-Curl index+middle to left-drag; add a pointed thumb to right-drag.
-⌘T captures a reference image so cursor travel stays consistent with distance.
+Point index+middle with ring+pinky curled to move the macOS cursor from the index tip.
+A very fast open-and-close fist that lands on that pointing pose toggles tracking on or off.
+Press S to warp the cursor onto that fingertip. Touch thumb to the curled ring to left-click/drag.
+⌘T captures a desk-distance reference; the Desk slider is base sensitivity.
 
 Close the preview or use --no-preview; Ctrl+C to quit.
 """
@@ -37,18 +38,20 @@ import mediapipe as mp
 
 from gestures.app_switcher import AppSwitcher
 from gestures.cursor import PointerCursor
-from gestures.landmarks import palm_size_px
+from gestures.landmarks import INDEX_TIP, palm_size_px
 from gestures.scrolling import Scrolling
 from gestures.swipe_scroller import SwipeScroller
 from mac_keys import (
     async_cmd,
     async_page_up,
     async_tap_tab,
+    display_bounds,
     move_mouse,
     mouse_down,
     mouse_up,
     release_mouse,
     set_cmd_state,
+    set_mouse_position,
     smooth_scroll,
     start_cmd_t_monitor,
 )
@@ -75,6 +78,9 @@ HAND_COLORS = {
     "Right": (40, 180, 255),
 }
 DEFAULT_COLOR = (0, 200, 255)
+TRACKBAR_NAME = "Desk 0.25-3.00"
+TRACKBAR_MIN = 25
+TRACKBAR_MAX = 300
 
 
 def open_camera(preferred: int | None = None) -> cv2.VideoCapture:
@@ -129,10 +135,14 @@ def fingers_down(hand_landmarks) -> list[str]:
     return down
 
 
-def draw_hud(frame, lines: list[str]) -> None:
-    height = 58 + 26 * max(len(lines), 1)
+def draw_hud(frame, lines: list[str], sensitivity: float | None = None) -> None:
+    bar_extra = 40 if sensitivity is not None else 0
+    height = 58 + 26 * max(len(lines), 1) + bar_extra
     cv2.rectangle(frame, (16, 16), (860, 16 + height), (18, 18, 18), -1)
     y = 46
+    if sensitivity is not None:
+        y = _draw_sensitivity_bar(frame, 28, 28, 520, sensitivity)
+        y += 10
     for line in lines:
         cv2.putText(
             frame,
@@ -147,7 +157,7 @@ def draw_hud(frame, lines: list[str]) -> None:
         y += 26
     cv2.putText(
         frame,
-        "Q or Esc to quit",
+        "Q/Esc quit · S place cursor",
         (28, y),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.5,
@@ -155,6 +165,29 @@ def draw_hud(frame, lines: list[str]) -> None:
         1,
         cv2.LINE_AA,
     )
+
+
+def _draw_sensitivity_bar(frame, x: int, y: int, width: int, value: float) -> int:
+    min_v = TRACKBAR_MIN / 100.0
+    max_v = TRACKBAR_MAX / 100.0
+    t = (value - min_v) / (max_v - min_v)
+    t = max(0.0, min(1.0, t))
+    bar_h = 18
+    cv2.rectangle(frame, (x, y), (x + width, y + bar_h), (40, 40, 40), -1)
+    fill = max(2, int(width * t))
+    cv2.rectangle(frame, (x, y), (x + fill, y + bar_h), (40, 180, 255), -1)
+    cv2.rectangle(frame, (x, y), (x + width, y + bar_h), (200, 200, 200), 1)
+    cv2.putText(
+        frame,
+        f"Desk {value:.2f}x",
+        (x + width + 12, y + 15),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.58,
+        (240, 240, 240),
+        2,
+        cv2.LINE_AA,
+    )
+    return y + bar_h
 
 
 def draw_trail(frame, trail: deque[tuple[int, int]], color) -> None:
@@ -242,16 +275,29 @@ def main() -> None:
     last_ref_at = 0.0
     last_ref_msg = ""
     last_right_palm = 0.0
+    last_right_index: tuple[float, float] | None = None
     failed_frame_count = 0
     window = "Hand Control — tracker"
 
+    def on_desk_sensitivity(val: int) -> None:
+        pointer.set_base_sensitivity(max(TRACKBAR_MIN, val) / 100.0)
+        if preview:
+            cv2.setWindowTitle(
+                window, f"Hand Control — Desk {pointer.base_sensitivity:.2f}x"
+            )
+
     if preview:
         cv2.namedWindow(window, cv2.WINDOW_NORMAL)
+        cv2.setWindowTitle(window, f"Hand Control — Desk {pointer.base_sensitivity:.2f}x")
+        initial = int(round(pointer.base_sensitivity * 100))
+        initial = min(TRACKBAR_MAX, max(TRACKBAR_MIN, initial))
+        cv2.createTrackbar(TRACKBAR_NAME, window, initial, TRACKBAR_MAX, on_desk_sensitivity)
+        cv2.setTrackbarMin(TRACKBAR_NAME, window, TRACKBAR_MIN)
         print("Tracking in the background too. Close this window or click away; Ctrl+C or Q to quit.")
-        print("⌘T captures a hand-distance reference. Index+middle up, ring+pinky down moves the cursor.")
+        print("S places the cursor on the index tip. ⌘T is the desk reference. Desk slider is base sensitivity.")
     else:
         print("Running without a preview. Hold thumb+middle & tap index to cycle apps. Ctrl+C to quit.")
-        print("⌘T captures a hand-distance reference. Index+middle up, ring+pinky down moves the cursor.")
+        print("⌘T captures a desk-distance reference. Index+middle up, ring+pinky down moves the cursor.")
 
     try:
         while running:
@@ -332,6 +378,8 @@ def main() -> None:
                     if label == "Right":
                         saw_right = True
                         last_right_palm = palm_px
+                        index = hand_landmarks.landmark[INDEX_TIP]
+                        last_right_index = (index.x, index.y)
 
                         was_pointing = pointer.engaged
                         cursor = pointer.update(hand_landmarks, down, (width, height))
@@ -346,9 +394,7 @@ def main() -> None:
                         if cursor.engaged:
                             scrolling.reset()
                             scroller.reset()
-                            if pointer.held_button == "right":
-                                status_lines.append("Right drag")
-                            elif pointer.held_button == "left":
+                            if pointer.held_button == "left":
                                 status_lines.append("Left drag")
                             else:
                                 status_lines.append("Pointer")
@@ -450,13 +496,15 @@ def main() -> None:
                 status_lines.append("⌘T reference set")
             else:
                 status_lines.append("⌘T to set reference")
+            status_lines.append(f"Dist {pointer.distance_ratio(last_right_palm):.1f}x")
             if last_ref_msg and time.monotonic() - last_ref_at < 1.5:
                 status_lines.append(last_ref_msg)
             status_lines.append("Hold Right thumb+middle & tap index = ⌘Tab cycle")
-            status_lines.append("Index+middle up, ring+pinky down = pointer")
+            status_lines.append("S = place on index tip; thumb-to-ring = click")
+            status_lines.append("Fast open+fist then point = toggle pointer")
 
             if preview:
-                draw_hud(frame, status_lines)
+                draw_hud(frame, status_lines, sensitivity=pointer.base_sensitivity)
                 cv2.imshow(window, frame)
                 visible = cv2.getWindowProperty(window, cv2.WND_PROP_VISIBLE)
                 if visible < 1:
@@ -467,6 +515,29 @@ def main() -> None:
                     key = cv2.waitKey(1) & 0xFF
                     if key in (ord("q"), 27):
                         break
+                    if key in (ord("s"), ord("S")):
+                        if switcher.active:
+                            pass
+                        elif saw_right and last_right_index is not None:
+                            ox, oy, sw, sh = display_bounds()
+                            if sw > 0 and sh > 0:
+                                nx, ny = last_right_index
+                                set_mouse_position(
+                                    ox + nx * sw,
+                                    oy + ny * sh,
+                                    dragging=pointer.held_button,
+                                )
+                                pointer.engage_from_s()
+                                scrolling.reset()
+                                scroller.reset()
+                                last_ref_msg = "Cursor on index tip"
+                                last_ref_at = time.monotonic()
+                            else:
+                                last_ref_msg = "Could not place cursor"
+                                last_ref_at = time.monotonic()
+                        else:
+                            last_ref_msg = "No hand to place cursor"
+                            last_ref_at = time.monotonic()
     finally:
         release_mouse()
         set_cmd_state(False)

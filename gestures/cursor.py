@@ -1,25 +1,31 @@
-"""Right-hand pointer cursor: two-finger point, hold-to-drag clicks, distance scale."""
+"""Right-hand pointer: index-tip tracking, thumb-to-ring click, desk × distance scale."""
 
 from __future__ import annotations
 
 import json
 import math
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
 import cv2
 
-from .landmarks import INDEX_MCP, MIDDLE_MCP, WRIST, palm_size_px
+from .landmarks import index_tip_px, palm_size_px, thumb_to_ring_side
 
-# Screen pixels per image pixel at the ⌘T reference distance.
-PIXEL_GAIN = 2.2
-# Screen pixels per palm-length of travel when no reference is set.
-PALM_GAIN = 750.0
+DEFAULT_BASE_SENSITIVITY = 1.0
+SENSITIVITY_MIN = 0.25
+SENSITIVITY_MAX = 3.0
 SMOOTH_ALPHA = 0.35
 DEADZONE_PX = 1.5
 CONFIRM_FRAMES = 4
 MIN_PALM_PX = 1.0
+CLICK_ON = 0.18
+CLICK_OFF = 0.28
+TOGGLE_HISTORY = 8
+TOGGLE_COOLDOWN = 15
+LEAVE_GRACE = 12
+MAIN_FINGERS = frozenset({"index", "middle", "ring", "pinky"})
 
 REFERENCE_DIR = Path(__file__).resolve().parent.parent
 REFERENCE_PNG = REFERENCE_DIR / "hand_reference.png"
@@ -35,23 +41,57 @@ class CursorUpdate:
     button_up: Optional[str]
 
 
-def load_reference_palm() -> Optional[float]:
+def _clamp_sensitivity(value: float) -> float:
+    return min(SENSITIVITY_MAX, max(SENSITIVITY_MIN, value))
+
+
+def load_reference() -> tuple[Optional[float], float]:
+    """Return (palm_px or None, base_sensitivity)."""
     if not REFERENCE_JSON.is_file():
-        return None
+        return None, DEFAULT_BASE_SENSITIVITY
     try:
         data = json.loads(REFERENCE_JSON.read_text(encoding="utf-8"))
-        palm = float(data.get("palm_px", 0.0))
+        palm = float(data.get("palm_px", 0.0) or 0.0)
+        gain = float(data.get("base_sensitivity", DEFAULT_BASE_SENSITIVITY))
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
-        return None
-    return palm if palm > 0 else None
+        return None, DEFAULT_BASE_SENSITIVITY
+    return (palm if palm > 0 else None), _clamp_sensitivity(gain)
 
 
-def save_reference(frame, palm_px: float, frame_w: int, frame_h: int) -> bool:
-    payload = {"palm_px": palm_px, "frame_w": frame_w, "frame_h": frame_h}
+def save_reference(
+    frame,
+    palm_px: float,
+    frame_w: int,
+    frame_h: int,
+    base_sensitivity: float,
+) -> bool:
+    payload = {
+        "palm_px": palm_px,
+        "frame_w": frame_w,
+        "frame_h": frame_h,
+        "base_sensitivity": _clamp_sensitivity(base_sensitivity),
+    }
     try:
         REFERENCE_JSON.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         if frame is not None:
             cv2.imwrite(str(REFERENCE_PNG), frame)
+        return True
+    except OSError:
+        return False
+
+
+def persist_sensitivity(base_sensitivity: float) -> bool:
+    data: dict = {}
+    if REFERENCE_JSON.is_file():
+        try:
+            loaded = json.loads(REFERENCE_JSON.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                data = loaded
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            data = {}
+    data["base_sensitivity"] = _clamp_sensitivity(base_sensitivity)
+    try:
+        REFERENCE_JSON.write_text(json.dumps(data, indent=2), encoding="utf-8")
         return True
     except OSError:
         return False
@@ -66,37 +106,38 @@ def _is_move(down: set[str]) -> bool:
     )
 
 
-def _is_click(down: set[str]) -> bool:
-    return {"index", "middle", "ring", "pinky"}.issubset(down)
-
-
-def _tracking_point(hand_landmarks, width: float, height: float) -> tuple[float, float]:
-    lm = hand_landmarks.landmark
-    x = (lm[WRIST].x + lm[INDEX_MCP].x + lm[MIDDLE_MCP].x) / 3.0
-    y = (lm[WRIST].y + lm[INDEX_MCP].y + lm[MIDDLE_MCP].y) / 3.0
-    return x * width, y * height
+def _pose_name(down: set[str]) -> str:
+    if _is_move(down):
+        return "point"
+    curled = len(MAIN_FINGERS & down)
+    if curled >= 4:
+        return "fist"
+    if curled == 0:
+        return "open"
+    return "other"
 
 
 class PointerCursor:
-    """Relative macOS pointer from a two-finger pose, scaled by a ⌘T reference."""
+    """Relative macOS pointer from the index tip, scaled by desk sensitivity × palm ratio."""
 
     def __init__(
         self,
         confirm_frames: int = CONFIRM_FRAMES,
-        pixel_gain: float = PIXEL_GAIN,
-        palm_gain: float = PALM_GAIN,
+        base_sensitivity: Optional[float] = None,
         smooth_alpha: float = SMOOTH_ALPHA,
         deadzone_px: float = DEADZONE_PX,
     ):
+        palm, stored_gain = load_reference()
         self.confirm_frames = confirm_frames
-        self.pixel_gain = pixel_gain
-        self.palm_gain = palm_gain
+        self.base_sensitivity = (
+            stored_gain if base_sensitivity is None else _clamp_sensitivity(base_sensitivity)
+        )
         self.smooth_alpha = smooth_alpha
         self.deadzone_px = deadzone_px
         self.idle_smooth_alpha = 0.18
         self.gesture_smooth_alpha = 0.35
         self.idle_deadzone_px = 0.8
-        self.ref_palm_px: Optional[float] = load_reference_palm()
+        self.ref_palm_px: Optional[float] = palm
         self.engaged = False
         self.held_button: Optional[str] = None
         self._enter_count = 0
@@ -104,10 +145,23 @@ class PointerCursor:
         self._clutch = True
         self._filtered: Optional[tuple[float, float]] = None
         self._prev: Optional[tuple[float, float]] = None
+        self._poses: deque[str] = deque(maxlen=TOGGLE_HISTORY)
+        self._toggle_cooldown = 0
+        self._leave_grace = 0
 
     @property
     def has_reference(self) -> bool:
         return self.ref_palm_px is not None and self.ref_palm_px > 0
+
+    def distance_ratio(self, current_palm_px: float) -> float:
+        if not self.has_reference or current_palm_px <= 0:
+            return 1.0
+        return self.ref_palm_px / max(current_palm_px, MIN_PALM_PX)
+
+    def set_base_sensitivity(self, value: float, persist: bool = True) -> None:
+        self.base_sensitivity = _clamp_sensitivity(value)
+        if persist:
+            persist_sensitivity(self.base_sensitivity)
 
     def set_reference(self, palm_px: float, frame=None, frame_size=None) -> bool:
         if palm_px <= 0:
@@ -117,8 +171,24 @@ class PointerCursor:
         self._filtered = None
         self._prev = None
         if frame is not None and frame_size is not None:
-            return save_reference(frame, palm_px, int(frame_size[0]), int(frame_size[1]))
-        return True
+            return save_reference(
+                frame,
+                palm_px,
+                int(frame_size[0]),
+                int(frame_size[1]),
+                self.base_sensitivity,
+            )
+        return persist_sensitivity(self.base_sensitivity)
+
+    def engage_from_s(self) -> None:
+        """Engage immediately and clutch so the next relative frame does not jump."""
+        self.engaged = True
+        self._enter_count = self.confirm_frames
+        self._clutch = True
+        self._filtered = None
+        self._prev = None
+        self._leave_grace = 0
+        self._toggle_cooldown = TOGGLE_COOLDOWN
 
     def reset(self) -> Optional[str]:
         released = self.held_button
@@ -129,38 +199,63 @@ class PointerCursor:
         self._clutch = True
         self._filtered = None
         self._prev = None
+        self._leave_grace = 0
         return released
 
     def _scale(self, current_palm_px: float) -> float:
-        palm = max(current_palm_px, MIN_PALM_PX)
-        if self.has_reference:
-            return self.pixel_gain * (self.ref_palm_px / palm)
-        return self.palm_gain / palm
+        return self.base_sensitivity * self.distance_ratio(current_palm_px)
+
+    def _fast_fist_toggle(self) -> bool:
+        """True on a very fast open + closed fist that lands on the pointing pose."""
+        if self._toggle_cooldown > 0:
+            return False
+        poses = list(self._poses)
+        if len(poses) < 3 or poses[-1] != "point":
+            return False
+        prior = poses[:-1]
+        if "fist" not in prior or "open" not in prior:
+            return False
+        non_point = [pose for pose in prior if pose != "point"]
+        return bool(non_point) and non_point[-1] == "fist"
+
+    def _begin(self) -> None:
+        self.engaged = True
+        self._clutch = True
+        self._filtered = None
+        self._prev = None
+        self._leave_grace = 0
+        self._toggle_cooldown = TOGGLE_COOLDOWN
 
     def update(self, hand_landmarks, fingers_down: list[str], frame_size) -> CursorUpdate:
         width, height = frame_size
         down = set(fingers_down)
         move = _is_move(down)
-        click = _is_click(down)
+
+        if self._toggle_cooldown > 0:
+            self._toggle_cooldown -= 1
+
+        self._poses.append(_pose_name(down))
+        if self._fast_fist_toggle():
+            if self.engaged:
+                released = self.reset()
+                self._toggle_cooldown = TOGGLE_COOLDOWN
+                return CursorUpdate(False, 0.0, 0.0, None, released)
+            self._begin()
 
         if not self.engaged:
-            if move:
-                self._enter_count += 1
-                if self._enter_count >= self.confirm_frames:
-                    self.engaged = True
-                    self._clutch = True
-                    self._filtered = None
-                    self._prev = None
-            else:
-                self._enter_count = 0
-            if not self.engaged:
-                return CursorUpdate(False, 0.0, 0.0, None, None)
+            return CursorUpdate(False, 0.0, 0.0, None, None)
 
-        if not move and not click:
-            released = self.reset()
-            return CursorUpdate(False, 0.0, 0.0, None, released)
+        if not move:
+            self._leave_grace += 1
+            if self._leave_grace >= LEAVE_GRACE:
+                released = self.reset()
+                return CursorUpdate(False, 0.0, 0.0, None, released)
+            self._clutch = True
+            return CursorUpdate(True, 0.0, 0.0, None, None)
 
-        raw = _tracking_point(hand_landmarks, width, height)
+        self._leave_grace = 0
+
+        raw = index_tip_px(hand_landmarks, width, height)
         palm = palm_size_px(hand_landmarks, width, height)
         if self._filtered is None:
             self._filtered = raw
@@ -186,13 +281,16 @@ class PointerCursor:
             if math.hypot(dx, dy) < deadzone:
                 dx = dy = 0.0
 
+        contact = thumb_to_ring_side(hand_landmarks)
+        clicking = contact <= (CLICK_OFF if self._clicking else CLICK_ON)
+
         button_down: Optional[str] = None
         button_up: Optional[str] = None
-        if click and not self._clicking:
+        if clicking and not self._clicking:
             self._clicking = True
-            self.held_button = "right" if "thumb" not in down else "left"
-            button_down = self.held_button
-        elif move and self._clicking:
+            self.held_button = "left"
+            button_down = "left"
+        elif not clicking and self._clicking:
             self._clicking = False
             button_up = self.held_button
             self.held_button = None

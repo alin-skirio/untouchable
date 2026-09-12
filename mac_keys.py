@@ -271,6 +271,37 @@ def move_mouse(dx: float, dy: float, dragging: Optional[str] = None) -> None:
         pass
 
 
+def display_bounds() -> tuple[float, float, float, float]:
+    """Main display origin and size: (x, y, width, height)."""
+    if not _is_macos():
+        return 0.0, 0.0, 0.0, 0.0
+    try:
+        cg = _core_graphics()
+        bounds = _display_bounds(cg)
+        return bounds.origin.x, bounds.origin.y, bounds.size.width, bounds.size.height
+    except Exception:
+        return 0.0, 0.0, 0.0, 0.0
+
+
+def set_mouse_position(x: float, y: float, dragging: Optional[str] = None) -> None:
+    """Warp the cursor to an absolute screen point. Sequential — do not call from extra threads."""
+    if not _is_macos():
+        return
+    try:
+        cg = _core_graphics()
+        cf = _core_foundation()
+        point = _clamp_to_display(CGPoint(x, y), _display_bounds(cg))
+        if dragging == "right":
+            event_type, button = kCGEventRightMouseDragged, kCGMouseButtonRight
+        elif dragging == "left":
+            event_type, button = kCGEventLeftMouseDragged, kCGMouseButtonLeft
+        else:
+            event_type, button = kCGEventMouseMoved, kCGMouseButtonLeft
+        _post_mouse(cg, cf, event_type, point, button)
+    except Exception:
+        pass
+
+
 def page_up() -> None:
     try:
         cg = _core_graphics()
