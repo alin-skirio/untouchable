@@ -20,6 +20,9 @@ open hand → fist → that pose. Press S to warp the cursor onto the index tip.
 Hold right thumb+ring+pinky down, keep index+middle up and together,
 and swipe up rapidly to scroll down dynamically based on swipe severity.
 
+Hold both hands flat and perpendicular so they form a T (one hand's palm
+against the other's fingertips) to open TikTok.
+
 Face recognition runs on the same camera feed. Press A to add a named
 profile (saved in profiles.db), L to list profiles.
 
@@ -45,6 +48,8 @@ from gestures.landmarks import INDEX_TIP, palm_size_px
 from gestures.scroll_down import ScrollDown
 from gestures.scroll_up import ScrollUp
 from gestures.swipe_scroller import SwipeScroller
+from gestures.t_pose import TPose
+from launcher import open_tiktok
 from mac_keys import (
     async_cmd,
     async_tap_tab,
@@ -250,6 +255,7 @@ def main() -> None:
     scroll_down = ScrollDown()
     scroller = SwipeScroller()
     pointer = PointerCursor()
+    t_pose = TPose()
     cmd_t = start_cmd_t_monitor()
 
     last_cmd_tab_at = 0.0
@@ -258,6 +264,8 @@ def main() -> None:
     last_scroll_action = ""
     last_ref_at = 0.0
     last_ref_msg = ""
+    last_action_at = 0.0
+    last_action_msg = ""
     last_right_palm = 0.0
     last_right_index: tuple[float, float] | None = None
     failed_frame_count = 0
@@ -317,6 +325,7 @@ def main() -> None:
             status_lines: list[str] = []
             saw_right = False
             saw_left = False
+            pose_hands: list[tuple[object, list[str]]] = []
 
             # Face recognition / enrollment on the shared feed (draws on frame).
             status_lines.extend(face_id.process(frame, rgb))
@@ -346,6 +355,7 @@ def main() -> None:
 
                     current = active_finger.get(label, DEFAULT_FINGER)
                     down = fingers_down(hand_landmarks)
+                    pose_hands.append((hand_landmarks, down))
                     if len(down) == 1:
                         candidate = down[0]
                         prev, count = pending.get(label, (candidate, 0))
@@ -463,6 +473,18 @@ def main() -> None:
                 scroll_down.reset()
                 scroller.reset()
 
+            # Two flat hands held perpendicular (a "T") open TikTok.
+            if pointer.engaged:
+                t_pose.reset()
+            elif t_pose.update(pose_hands, (width, height)):
+                threading.Thread(target=open_tiktok, daemon=True).start()
+                # An open hand after a fist also looks like a flick scroll.
+                scroller.reset()
+                scroll_down.reset()
+                last_action_msg = "T pose → TikTok"
+                last_action_at = time.monotonic()
+                print(last_action_msg)
+
             for label, trail in trails.items():
                 if label not in seen:
                     trail.clear()
@@ -500,6 +522,10 @@ def main() -> None:
             status_lines.append(f"Dist {pointer.distance_ratio(last_right_palm):.1f}x")
             if last_ref_msg and time.monotonic() - last_ref_at < 1.5:
                 status_lines.append(last_ref_msg)
+            if t_pose.holding:
+                status_lines.append("T pose held")
+            if last_action_msg and time.monotonic() - last_action_at < 1.5:
+                status_lines.append(last_action_msg)
 
             if not seen and not face_id.enrolling and "No hands in view" not in status_lines:
                 status_lines.append("No hands in view")
@@ -507,6 +533,7 @@ def main() -> None:
             status_lines.append("S = place cursor on index tip")
             status_lines.append("Open → fist → index+middle+thumb out = pointer")
             status_lines.append("Pointer: thumb fold = left click, middle fold = right click")
+            status_lines.append("Two flat hands in a T = open TikTok")
 
             if preview:
                 draw_hud(frame, status_lines, sensitivity=pointer.base_sensitivity)
