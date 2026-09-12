@@ -9,9 +9,16 @@ from .pose import FOUR_TIPS
 DEFAULT_RISE_PX = 12.0
 PALM_FRACTION = 0.3  # of a calibrated palm
 HISTORY_FRAMES = 12  # ~0.4s at 30fps, so a lazy flick still accumulates
+# 8px is about as low as the threshold can go: at 6px, ordinary landmark
+# jitter from a motionless hand starts firing the gesture on its own.
+DEFAULT_RISE_PX = 8.0
+PALM_FRACTION = 0.12  # of a calibrated palm, ~8-13px at normal desk distance
+HISTORY_FRAMES = 16  # ~0.5s at 30fps, so a slow drift upward still counts
 MIN_HISTORY = 2
 COOLDOWN_FRAMES = 8
 MIN_TIP_RATIO = 0.5  # slack for the worst-tracked tip, usually the pinky
+COOLDOWN_FRAMES = 6
+MIN_TIP_RATIO = 0.3  # slack for the worst-tracked tip, usually the pinky
 
 
 def rise_threshold_px(ref_palm_px: float | None, default_px: float = DEFAULT_RISE_PX) -> float:

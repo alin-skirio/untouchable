@@ -24,6 +24,7 @@ Hold both hands flat and perpendicular so they form a T (one hand's palm
 against the other's fingertips) to open TikTok and enter TikTok mode. In
 that mode, flicking all fingertips up by a fraction of a calibrated palm
 (12px until ⌘T sets a reference) goes to the next video. Make the T again
+(8px until ⌘T sets a reference) goes to the next video. Make the T again
 to close the tab and leave the mode.
 
 Face recognition runs on the same camera feed. Press A to add a named
