@@ -58,6 +58,7 @@ from hud import (
     window_open,
 )
 from launcher import open_tiktok
+import presence
 from mac_keys import (
     async_cmd,
     async_tap_tab,
@@ -260,9 +261,13 @@ def main() -> None:
             saw_left = False
             pose_hands: list[tuple[object, list[str]]] = []
 
-            # Face recognition / enrollment on the shared feed (draws on frame).
-            if hud.on("face"):
-                status_lines.extend(face_id.process(frame, rgb))
+            # Face recognition on the shared feed — also the lock for gestures.
+            status_lines.extend(face_id.process(frame, rgb))
+            known = face_id.recognized_names()
+            presence.publish(known)
+            armed = bool(known)
+            if not armed:
+                status_lines.insert(0, "Locked")
 
             if result.multi_hand_landmarks:
                 handedness_list = result.multi_handedness or []
@@ -322,7 +327,7 @@ def main() -> None:
 
                     if label == "Left":
                         saw_left = True
-                        if hud.on("scroll_up"):
+                        if armed and hud.on("scroll_up"):
                             up_lines = scroll_up.update(hand_landmarks, down)
                             if up_lines > 0:
                                 threading.Thread(
@@ -339,7 +344,7 @@ def main() -> None:
                         last_right_index = (index.x, index.y)
 
                         was_pointing = pointer.engaged
-                        if hud.on("pointer"):
+                        if armed and hud.on("pointer"):
                             cursor = pointer.update(hand_landmarks, down, (width, height))
                             if cursor.dx or cursor.dy:
                                 move_mouse(cursor.dx, cursor.dy)
@@ -366,7 +371,7 @@ def main() -> None:
                             else:
                                 status_lines.append(pointer.arm_hint)
 
-                        if not pointer.engaged:
+                        if armed and not pointer.engaged:
                             if hud.on("app_switcher"):
                                 started, tapped, ended = switcher.update(hand_landmarks)
 
@@ -404,10 +409,10 @@ def main() -> None:
                                     last_scroll_amount = scroll_amount
                                     last_scroll_action = "flick"
 
-            if not saw_left:
+            if not armed or not saw_left:
                 scroll_up.reset()
 
-            if not saw_right:
+            if not armed or not saw_right:
                 if pointer.engaged:
                     pointer.reset()
                     flash_pointer_rim(False)
@@ -418,7 +423,7 @@ def main() -> None:
                 scroller.reset()
 
             # Two flat hands held perpendicular (a "T") open TikTok.
-            if pointer.engaged or not hud.on("t_pose"):
+            if not armed or pointer.engaged or not hud.on("t_pose"):
                 t_pose.reset()
             elif t_pose.update(pose_hands, (width, height)):
                 threading.Thread(target=open_tiktok, daemon=True).start()
@@ -436,7 +441,7 @@ def main() -> None:
                     pending.pop(label, None)
 
             if cmd_t.consume():
-                if switcher.active:
+                if not armed or switcher.active:
                     pass
                 elif saw_right and last_right_palm >= MIN_PALM_SIZE_PX:
                     saved = pointer.set_reference(last_right_palm, frame, (width, height))
@@ -524,7 +529,7 @@ def main() -> None:
             if key in (ord("q"),):
                 break
             if key in (ord("s"), ord("S")):
-                if switcher.active or not hud.on("pointer"):
+                if not armed or switcher.active or not hud.on("pointer"):
                     pass
                 elif saw_right and last_right_index is not None:
                     ox, oy, sw, sh = display_bounds()
@@ -564,6 +569,7 @@ def main() -> None:
                 else:
                     print("No face profiles yet. Press A to add one.")
     finally:
+        presence.clear()
         release_mouse()
         set_cmd_state(False)
         cmd_t.stop()

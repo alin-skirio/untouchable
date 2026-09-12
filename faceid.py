@@ -902,6 +902,20 @@ class FaceID:
     def list_names(self) -> list[str]:
         return [name for name, _templates, _thresh in self.profiles]
 
+    def recognized_names(self) -> list[str]:
+        names: list[str] = []
+        seen: set[str] = set()
+        for track in self._tracks.values():
+            name = track.stable_name
+            if not name:
+                continue
+            key = name.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            names.append(name)
+        return names
+
     def close(self) -> None:
         self._face_mesh.close()
 

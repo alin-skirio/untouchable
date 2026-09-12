@@ -26,6 +26,7 @@ from dotenv import load_dotenv
 from websockets.exceptions import InvalidStatus
 
 from grok_agent import INSTRUCTIONS, TOOLS, _run_tool, run_instruction
+import presence
 
 ROOT = Path(__file__).resolve().parent
 load_dotenv(ROOT / ".env", override=True)
@@ -227,6 +228,12 @@ async def run_realtime(key: str) -> None:
                     "error": 'Wake phrase "hey grok" was not heard. Ignore this request.',
                 }
                 print(f"Ignored tool (no wake): {name}")
+            elif not presence.unlocked():
+                result = {
+                    "ok": False,
+                    "error": "No recognized face in the camera. Look at the camera, then try again.",
+                }
+                print(f"Ignored tool (no face): {name}")
             else:
                 print(f"Tool: {name} {json.dumps(args)}")
                 result = _run_tool(name, args)
@@ -389,6 +396,9 @@ def run_stt_fallback(key: str) -> None:
         if is_exit_command(text):
             print("Shutting down the voice listener.")
             return
+        if not presence.unlocked():
+            print("No recognized face in the camera. Look at the camera, then try again.")
+            continue
         if is_simplify_command(text):
             from simplify import simplify_current_page
 

@@ -641,22 +641,25 @@ def _read_zen() -> dict:
 def _fetch_public_html(url: str) -> str:
     if not url.lower().startswith(("http://", "https://")):
         return ""
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:142.0) "
+            "Gecko/20100101 Firefox/142.0"
+        ),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Cache-Control": "no-cache",
+    }
     try:
         from urllib.request import Request, urlopen
 
-        req = Request(
-            url,
-            headers={
-                "User-Agent": (
-                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                    "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15"
-                ),
-                "Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
-            },
-        )
-        with urlopen(req, timeout=3) as resp:
-            raw = resp.read(700_000)
-        return raw.decode("utf-8", "replace")
+        req = Request(url, headers=headers)
+        with urlopen(req, timeout=12) as resp:
+            raw = resp.read(900_000)
+        text = raw.decode("utf-8", "replace")
+        if "<html" in text.lower() or "<body" in text.lower() or "<p" in text.lower():
+            return text
+        return ""
     except Exception:
         return ""
 
@@ -858,6 +861,58 @@ def _dom_html_from_browser(kind: str) -> str:
     return _run_browser_js(kind, DOM_HTML_JS)
 
 
+def _pasteboard_html() -> str:
+    script = (
+        'use framework "AppKit"\n'
+        "set pb to current application's NSPasteboard's generalPasteboard()\n"
+        'set html to pb\'s stringForType:"public.html"\n'
+        "if html is missing value then return \"\"\n"
+        "return html as string\n"
+    )
+    try:
+        proc = subprocess.run(
+            ["osascript", "-e", script],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except subprocess.TimeoutExpired:
+        return ""
+    if proc.returncode != 0:
+        return ""
+    return proc.stdout or ""
+
+
+def _copy_zen_html() -> str:
+    """Read the front Zen tab via copy. Cloudflare blocks a direct HTTP fetch."""
+    old = subprocess.run(["pbpaste"], check=False, capture_output=True).stdout
+    script = """
+tell application "Zen" to activate
+delay 0.25
+tell application "System Events"
+  tell process "zen"
+    keystroke "a" using command down
+    delay 0.18
+    keystroke "c" using command down
+    delay 0.22
+    key code 53
+  end tell
+end tell
+"""
+    proc = subprocess.run(
+        ["osascript", "-e", script],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    html = _pasteboard_html() if proc.returncode == 0 else ""
+    subprocess.run(["pbcopy"], input=old, check=False)
+    if proc.returncode != 0:
+        return ""
+    return html.strip()
+
+
 def _merge_images(*groups: list[dict]) -> list[dict]:
     seen: set[str] = set()
     merged: list[dict] = []
@@ -876,16 +931,19 @@ def _merge_images(*groups: list[dict]) -> list[dict]:
 def get_browser_page(max_chars: int = PAGE_TEXT_MAX) -> dict:
     """URL, title, HTML, and text of the front Zen, Safari, or Chrome page.
 
-    Prefers the live DOM HTML from Safari/Chrome. Zen has no JS bridge, so
-    the public HTML for that tab URL is fetched instead of copy-paste.
+    Zen has no JavaScript Apple Event bridge. Public pages are fetched;
+    Cloudflare-backed tabs are copied from the live Zen view.
     """
     limit = max(1000, min(int(max_chars), 12_000))
     front = (get_context().get("frontmost") or "").lower()
-    readers = [(_read_zen, "zen"), (_read_safari, "safari"), (_read_chrome, "chrome")]
-    if "chrome" in front:
-        readers = [(_read_chrome, "chrome"), (_read_zen, "zen"), (_read_safari, "safari")]
+    if _zen_process_running():
+        readers = [(_read_zen, "zen"), (_read_safari, "safari"), (_read_chrome, "chrome")]
+    elif "chrome" in front:
+        readers = [(_read_chrome, "chrome"), (_read_safari, "safari")]
     elif "safari" in front:
-        readers = [(_read_safari, "safari"), (_read_zen, "zen"), (_read_chrome, "chrome")]
+        readers = [(_read_safari, "safari"), (_read_chrome, "chrome")]
+    else:
+        readers = [(_read_zen, "zen"), (_read_safari, "safari"), (_read_chrome, "chrome")]
 
     last_err = "No browser page found. Open a tab in Zen, Safari, or Google Chrome."
     for reader, kind in readers:
@@ -898,6 +956,7 @@ def get_browser_page(max_chars: int = PAGE_TEXT_MAX) -> dict:
             continue
         html = ""
         source = ""
+        clip_html = ""
         if kind in {"safari", "chrome"}:
             html = _dom_html_from_browser(kind)
             if html:
@@ -906,7 +965,21 @@ def get_browser_page(max_chars: int = PAGE_TEXT_MAX) -> dict:
         if not html and fetched_html:
             html = fetched_html
             source = "fetched"
+        if kind == "zen" and len(compact_html(html, limit)) < 80:
+            clip_html = _copy_zen_html()
+            if clip_html:
+                html = clip_html
+                source = "copied"
         html = compact_html(html, limit)
+        if len(html) < 80:
+            last_err = (
+                "Could not read the Zen tab. Keep the page visible and grant Accessibility "
+                "to Terminal or Python, then try again."
+                if kind == "zen"
+                else "Enable Develop > Allow JavaScript from Apple Events in Safari, "
+                "or View > Developer > Allow JavaScript from Apple Events in Chrome."
+            )
+            continue
         text = html_to_text(html, limit)
         images = []
         if kind in {"safari", "chrome"}:
@@ -914,22 +987,14 @@ def get_browser_page(max_chars: int = PAGE_TEXT_MAX) -> dict:
         images = _merge_images(images, extract_page_images(html, url))
         if fetched_html:
             images = _merge_images(images, extract_page_images(fetched_html, url))
+        if clip_html:
+            images = _merge_images(images, extract_page_images(clip_html, url))
         page["html"] = html
         page["text"] = text
         page["text_source"] = source
         page["images"] = images
         page["title"] = str(page.get("title") or "").strip()
-        page["js_hint"] = (
-            ""
-            if len(html) >= 80
-            else (
-                "Could not load HTML for this tab. If it is behind a login, "
-                "open it in Safari or Chrome with JavaScript from Apple Events enabled."
-                if kind == "zen"
-                else "Enable Develop > Allow JavaScript from Apple Events in Safari, "
-                "or View > Developer > Allow JavaScript from Apple Events in Chrome."
-            )
-        )
+        page["js_hint"] = ""
         return page
     return _err(last_err)
 
