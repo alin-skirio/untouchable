@@ -13,12 +13,12 @@ import cv2
 from .landmarks import INDEX_MCP, MIDDLE_MCP, WRIST, palm_size_px
 
 # Screen pixels per image pixel at the ⌘T reference distance.
-PIXEL_GAIN = 2.8
+PIXEL_GAIN = 2.2
 # Screen pixels per palm-length of travel when no reference is set.
-PALM_GAIN = 900.0
-SMOOTH_ALPHA = 0.4
-DEADZONE_PX = 1.25
-CONFIRM_FRAMES = 3
+PALM_GAIN = 750.0
+SMOOTH_ALPHA = 0.35
+DEADZONE_PX = 1.5
+CONFIRM_FRAMES = 4
 MIN_PALM_PX = 1.0
 
 REFERENCE_DIR = Path(__file__).resolve().parent.parent
@@ -93,6 +93,9 @@ class PointerCursor:
         self.palm_gain = palm_gain
         self.smooth_alpha = smooth_alpha
         self.deadzone_px = deadzone_px
+        self.idle_smooth_alpha = 0.18
+        self.gesture_smooth_alpha = 0.35
+        self.idle_deadzone_px = 0.8
         self.ref_palm_px: Optional[float] = load_reference_palm()
         self.engaged = False
         self.held_button: Optional[str] = None
@@ -162,10 +165,10 @@ class PointerCursor:
         if self._filtered is None:
             self._filtered = raw
         else:
-            a = self.smooth_alpha
+            alpha = self.gesture_smooth_alpha if self.engaged else self.idle_smooth_alpha
             self._filtered = (
-                a * raw[0] + (1.0 - a) * self._filtered[0],
-                a * raw[1] + (1.0 - a) * self._filtered[1],
+                alpha * raw[0] + (1.0 - alpha) * self._filtered[0],
+                alpha * raw[1] + (1.0 - alpha) * self._filtered[1],
             )
 
         dx = dy = 0.0
@@ -179,7 +182,8 @@ class PointerCursor:
             scale = self._scale(palm)
             dx = dximg * scale
             dy = dyimg * scale
-            if math.hypot(dx, dy) < self.deadzone_px:
+            deadzone = self.deadzone_px if self.engaged else self.idle_deadzone_px
+            if math.hypot(dx, dy) < deadzone:
                 dx = dy = 0.0
 
         button_down: Optional[str] = None
