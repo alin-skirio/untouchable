@@ -17,7 +17,7 @@ from .landmarks import (
 
 TOGETHER = 0.42
 LINE_DEV = 0.18
-LINES_PER_FRAME = 4.0
+LINES_PER_FRAME = 6.0
 
 ALL_FINGERS = ("thumb", "index", "middle", "ring", "pinky")
 ALL_TIPS = (THUMB_TIP, INDEX_TIP, MIDDLE_TIP, RING_TIP, PINKY_TIP)
