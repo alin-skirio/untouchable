@@ -10,11 +10,10 @@ Release thumb+middle to select the active application.
 
 Pop a right fist open (index through pinky) to flick-scroll down.
 
-Make a tight right fist with all five fingertips in a straight line
-(neighbor distances near zero) and hold it for 10 seconds to enter
-Scrolling. Keep that line, then open the fist until the fingers point
-up at max palm reach to ScrollUp one page. Close to a fist and open
-again to page up again. Drop the open fingers to ScrollDown.
+Hold the pinky up for 3 seconds (fingers touching) to start ScrollUp,
+make a fist, then raise: the page follows and stops when all fingers
+point up at max palm-reach. Fist again to repeat. If the fingers
+separate, it cancels. Point the pinky up to ScrollDown.
 
 Point index+middle with ring+pinky curled to move the macOS cursor from the index tip.
 A very fast open-and-close fist that lands on that pointing pose toggles tracking on or off.
@@ -38,12 +37,11 @@ import mediapipe as mp
 
 from gestures.app_switcher import AppSwitcher
 from gestures.cursor import PointerCursor
-from gestures.landmarks import INDEX_TIP, palm_size_px
+from gestures.landmarks import palm_size_px
 from gestures.scrolling import Scrolling
 from gestures.swipe_scroller import SwipeScroller
 from mac_keys import (
     async_cmd,
-    async_page_up,
     async_tap_tab,
     display_bounds,
     move_mouse,
@@ -263,11 +261,11 @@ def main() -> None:
     pending: dict[str, tuple[str, int]] = {}
     
     switcher = AppSwitcher()
-    scrolling = Scrolling()
+    scroll_up = ScrollUp()
+    scroll_down = ScrollDown()
     scroller = SwipeScroller()
     pointer = PointerCursor()
     cmd_t = start_cmd_t_monitor()
-
     last_cmd_tab_at = 0.0
     last_scroll_at = 0.0
     last_scroll_amount = 0
@@ -392,14 +390,16 @@ def main() -> None:
                             mouse_up(cursor.button_up)
 
                         if cursor.engaged:
-                            scrolling.reset()
+                            scroll_up.reset()
+                            scroll_down.reset()
                             scroller.reset()
                             if pointer.held_button == "left":
                                 status_lines.append("Left drag")
                             else:
                                 status_lines.append("Pointer")
                         elif was_pointing:
-                            scrolling.reset()
+                            scroll_up.reset()
+                            scroll_down.reset()
                             scroller.reset()
                         else:
                             started, tapped, ended = switcher.update(hand_landmarks)
@@ -417,28 +417,34 @@ def main() -> None:
                             if switcher.active:
                                 status_lines.append("Right pinch: App Switcher Active (⌘ Held)")
 
-                            scroll_action = scrolling.update(hand_landmarks, down)
-                            if scroll_action == "up":
-                                async_page_up()
-                                last_scroll_at = time.monotonic()
-                                last_scroll_amount = 1
-                                last_scroll_action = "up"
-                            elif scroll_action == "down":
+                            up_lines = scroll_up.update(hand_landmarks, down)
+                            down_lines = 0 if up_lines > 0 else scroll_down.update(hand_landmarks, down)
+                            if up_lines > 0:
                                 threading.Thread(
-                                    target=smooth_scroll, args=(-scrolling.scroll_amount,), daemon=True
+                                    target=smooth_scroll, args=(up_lines,), daemon=True
                                 ).start()
                                 last_scroll_at = time.monotonic()
-                                last_scroll_amount = scrolling.scroll_amount
+                                last_scroll_amount = up_lines
+                                last_scroll_action = "up"
+                            elif down_lines > 0:
+                                threading.Thread(
+                                    target=smooth_scroll, args=(-down_lines,), daemon=True
+                                ).start()
+                                last_scroll_at = time.monotonic()
+                                last_scroll_amount = down_lines
                                 last_scroll_action = "down"
-                            elif scrolling.active:
+                            elif scroll_up.phase == "raising":
                                 scroller.reset()
                                 status_lines.append(
-                                    "Scrolling: fist then point up for one page"
+                                    "ScrollUp: raise touching fingers — page follows"
                                 )
-                            elif scrolling.hold_seconds > 0:
+                            elif scroll_up.phase == "wait_fist":
+                                scroller.reset()
+                                status_lines.append("ScrollUp: make a fist")
+                            elif scroll_up.hold_seconds > 0:
                                 scroller.reset()
                                 status_lines.append(
-                                    f"Scrolling: hold lined-up fist {scrolling.hold_seconds:.1f}/{scrolling.confirm_seconds:.0f}s"
+                                    f"ScrollUp: hold pinky up {scroll_up.hold_seconds:.1f}/{scroll_up.initiate_seconds:.0f}s"
                                 )
                             else:
                                 scroll_amount = scroller.update(hand_landmarks, down)
@@ -459,7 +465,8 @@ def main() -> None:
                 if switcher.active:
                     switcher.reset()
                     async_cmd(False)
-                scrolling.reset()
+                scroll_up.reset()
+                scroll_down.reset()
                 scroller.reset()
 
             for label, trail in trails.items():
@@ -485,7 +492,7 @@ def main() -> None:
                 status_lines.append("Sent Tab")
             if time.monotonic() - last_scroll_at < 1.0:
                 if last_scroll_action == "up":
-                    status_lines.append("Scroll up (1 page)")
+                    status_lines.append(f"Scroll up ({abs(last_scroll_amount)} lines)")
                 elif last_scroll_action == "flick":
                     status_lines.append(f"Flick scroll ({abs(last_scroll_amount)} lines)")
                 else:
