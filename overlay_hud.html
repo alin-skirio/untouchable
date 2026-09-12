@@ -15,8 +15,9 @@
       --green: #6ee7b7;
       --amber: #fbbf24;
       --rose: #fb7185;
-      --glass: rgba(12, 14, 18, 0.46);
-      --stroke: rgba(255, 255, 255, 0.12);
+      --glass: rgba(20, 22, 28, 0.58);
+      --stroke: rgba(255, 255, 255, 0.16);
+      --frost: blur(24px) saturate(1.4);
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body {
@@ -50,8 +51,8 @@
       background: rgba(28, 30, 36, 0.55);
       box-shadow: 0 18px 50px rgba(0,0,0,0.35);
     }
-    .fake-win.a { left: 9%; top: 18%; width: 38%; height: 42%; }
-    .fake-win.b { right: 12%; top: 20%; width: 32%; height: 46%; }
+    .fake-win.a { left: 8%; top: 16%; width: 50%; height: 58%; }
+    .fake-win.b { right: 8%; top: 20%; width: 46%; height: 54%; }
     .fake-win .bar {
       height: 28px;
       border-bottom: 1px solid rgba(255,255,255,0.06);
@@ -60,77 +61,76 @@
 
     .layer { position: fixed; inset: 0; }
     .hidden { display: none !important; }
+    .frost {
+      background: var(--glass);
+      border: 1px solid var(--stroke);
+      backdrop-filter: var(--frost);
+      -webkit-backdrop-filter: var(--frost);
+      box-shadow: 0 8px 28px rgba(0, 0, 0, 0.22);
+    }
 
     .intro {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: transparent;
+    }
+    .intro-card {
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      background: rgba(10, 11, 15, 0.42);
-      backdrop-filter: blur(28px) saturate(1.15);
-      -webkit-backdrop-filter: blur(28px) saturate(1.15);
-    }
-    .intro::before {
-      content: "";
-      position: absolute;
-      inset: -20%;
-      background:
-        radial-gradient(ellipse at 78% 8%, rgba(180, 120, 60, 0.18), transparent 42%),
-        radial-gradient(ellipse at 18% 88%, rgba(40, 60, 90, 0.16), transparent 46%);
-      pointer-events: none;
+      flex: 0 0 auto;
+      width: max-content;
+      padding: 20px 32px 16px;
+      border-radius: 18px;
+      text-align: center;
     }
     .intro-title {
-      font-weight: 280;
-      font-size: clamp(42px, 6.2vw, 72px);
+      font-weight: 400;
+      font-size: clamp(24px, 3.2vw, 30px);
       letter-spacing: 0.01em;
-      line-height: 1;
+      line-height: 1.15;
+      white-space: nowrap;
       color: rgba(255, 255, 255, 0.94);
     }
     .intro-sub {
-      margin-top: 18px;
+      margin-top: 6px;
       font-size: 11px;
-      letter-spacing: 0.42em;
+      letter-spacing: 0.16em;
       text-transform: uppercase;
-      color: var(--mute);
+      color: var(--dim);
     }
     .intro-foot {
-      position: absolute;
-      bottom: 28px;
-      left: 0;
-      right: 0;
-      text-align: center;
-      font-size: 12px;
+      margin-top: 8px;
+      font-size: 11px;
       letter-spacing: 0.04em;
       color: var(--mute);
     }
 
     .chips {
       position: absolute;
-      top: 22px;
+      top: 12px;
       left: 50%;
       transform: translateX(-50%);
       display: flex;
-      gap: 10px;
+      gap: 6px;
       pointer-events: none;
     }
     .chip {
       display: flex;
       align-items: center;
-      gap: 8px;
-      height: 34px;
-      padding: 0 14px 0 12px;
+      gap: 7px;
+      height: 28px;
+      padding: 0 12px 0 10px;
       border-radius: 999px;
-      background: var(--glass);
-      border: 1px solid var(--stroke);
-      backdrop-filter: blur(18px) saturate(1.2);
-      -webkit-backdrop-filter: blur(18px) saturate(1.2);
-      font-size: 13px;
+      font-size: 12px;
       color: var(--text);
       white-space: nowrap;
     }
     .dot {
-      width: 7px;
-      height: 7px;
+      width: 6px;
+      height: 6px;
       border-radius: 50%;
       box-shadow: 0 0 8px currentColor;
     }
@@ -144,37 +144,40 @@
     .gestures {
       position: absolute;
       left: 50%;
-      bottom: 28px;
+      bottom: 12px;
       transform: translateX(-50%);
       display: flex;
-      gap: 22px;
-      padding: 12px 22px;
-      border-radius: 20px;
-      background: rgba(10, 12, 16, 0.62);
-      border: 1px solid var(--stroke);
-      backdrop-filter: blur(20px) saturate(1.15);
-      -webkit-backdrop-filter: blur(20px) saturate(1.15);
+      align-items: center;
+      gap: 14px;
+      padding: 7px 14px;
+      border-radius: 16px;
       pointer-events: none;
     }
-    .g-item { min-width: 92px; }
+    .g-item {
+      display: flex;
+      align-items: baseline;
+      gap: 6px;
+      white-space: nowrap;
+    }
     .g-title {
       font-size: 12px;
       color: var(--text);
-      margin-bottom: 3px;
     }
     .g-hint {
       font-size: 11px;
       color: var(--dim);
-      letter-spacing: 0.01em;
     }
 
     .hud-toggle {
       position: absolute;
-      right: 22px;
-      bottom: 22px;
+      right: 12px;
+      bottom: 12px;
       display: flex;
       align-items: center;
-      gap: 10px;
+      gap: 8px;
+      height: 28px;
+      padding: 0 8px 0 12px;
+      border-radius: 999px;
       pointer-events: auto;
       color: var(--mute);
       font-size: 11px;
@@ -186,25 +189,22 @@
     }
     .hud-btn {
       appearance: none;
-      border: 1px solid var(--stroke);
-      background: rgba(14, 16, 20, 0.72);
+      border: 0;
+      background: transparent;
       color: var(--dim);
       border-radius: 999px;
-      height: 28px;
-      padding: 0 12px;
+      height: 20px;
+      padding: 0 2px 0 0;
       font: inherit;
       letter-spacing: 0.12em;
       cursor: pointer;
     }
-    .hud-btn.on {
-      color: var(--text);
-      border-color: rgba(94, 234, 212, 0.35);
-    }
+    .hud-btn.on { color: var(--text); }
     .hud-btn .mark {
       display: inline-block;
-      width: 7px;
-      height: 7px;
-      margin-right: 6px;
+      width: 6px;
+      height: 6px;
+      margin-right: 5px;
       border-radius: 50%;
       background: var(--mute);
       vertical-align: 0;
@@ -224,13 +224,15 @@
     <div class="fake-win b"><div class="bar"><div class="dots">● ● ●</div></div></div>
   </div>
   <div id="intro" class="layer intro hidden">
-    <div class="intro-title" id="welcome">Welcome</div>
-    <div class="intro-sub">Desk ready</div>
-    <div class="intro-foot">Click or Esc to continue</div>
+    <div class="intro-card frost">
+      <div class="intro-title" id="welcome">Welcome</div>
+      <div class="intro-sub">Desk ready</div>
+      <div class="intro-foot">Click or Esc</div>
+    </div>
   </div>
 
   <div id="chips" class="chips hidden"></div>
-  <div id="gestures" class="gestures hidden">
+  <div id="gestures" class="gestures frost hidden">
     <div class="g-item"><div class="g-title">Pointer</div><div class="g-hint">open → fist → gun</div></div>
     <div class="g-item"><div class="g-title">Clicker</div><div class="g-hint">thumb + middle</div></div>
     <div class="g-item"><div class="g-title">Scroll</div><div class="g-hint">index / pinky</div></div>
@@ -238,8 +240,8 @@
     <div class="g-item"><div class="g-title">Voice</div><div class="g-hint">hey Grok</div></div>
   </div>
 
-  <div id="toggle" class="hud-toggle hidden">
-    <span>H · toggle HUD</span>
+  <div id="toggle" class="hud-toggle frost hidden">
+    <span>H · HUD</span>
     <button class="hud-btn" id="hud-btn" type="button"><span class="mark"></span>HUD</button>
   </div>
 
@@ -257,7 +259,7 @@
     const hudBtn = document.getElementById("hud-btn");
 
     function chip(dot, label, extra) {
-      return `<div class="chip ${extra || ""}"><span class="dot ${dot} live-dot"></span>${label}</div>`;
+      return `<div class="chip frost ${extra || ""}"><span class="dot ${dot} live-dot"></span>${label}</div>`;
     }
 
     function render(state) {
@@ -265,9 +267,8 @@
       const intro = !!state.intro;
       const hud = !!state.hud;
       const locked = state.mode === "locked" || state.unlocked === false;
-      const showToggle = layer === "toggle" || intro || true;
 
-      welcomeEl.textContent = name ? `Welcome ${name}` : "Welcome";
+      welcomeEl.textContent = name ? `Welcome, ${name}` : "Welcome";
       introEl.classList.toggle("hidden", !intro || layer === "toggle");
 
       const showChrome = hud && !intro && layer !== "toggle";
@@ -278,16 +279,16 @@
         const reason = state.lock_reason || "unfamiliar face";
         html = chip("amber", `Commands off · ${reason}`, "warn");
       } else if (showChrome) {
-        html += chip("green", name ? `Unlocked` : "Unlocked");
-        if (state.voice) html += chip("violet", "Voice listening");
-        if (state.pointer) html += chip("teal", "Pointer armed");
+        html += chip("green", name ? `Unlocked · ${name}` : "Unlocked");
+        if (state.voice) html += chip("violet", "Voice");
+        if (state.pointer) html += chip("teal", "Pointer");
       }
       chipsEl.innerHTML = html;
       chipsEl.classList.toggle("hidden", !html || layer === "toggle" || intro);
 
-      toggleEl.classList.remove("hidden");
+      toggleEl.classList.toggle("hidden", !!(intro && layer !== "toggle"));
       hudBtn.classList.toggle("on", hud);
-      hudBtn.innerHTML = `<span class="mark"></span>${hud ? "ON" : "HUD"}`;
+      hudBtn.innerHTML = `<span class="mark"></span>${hud ? "ON" : ""}`;
 
       const capture = !!state.capture && layer === "chrome";
       document.body.classList.toggle("capture", capture);

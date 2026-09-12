@@ -288,7 +288,7 @@ def server_url() -> str:
 
 
 def show_welcome(name: str) -> None:
-    """Full-viewport frost intro. Replaces the old top-of-screen pill."""
+    """Centered frost card. Dismiss with click, Esc, or INTRO_SEC."""
     who = display_name(name, MAX_NAME)
     if not who:
         return

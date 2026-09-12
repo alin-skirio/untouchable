@@ -91,7 +91,7 @@ class OverlayStateTests(unittest.TestCase):
             html = resp.read().decode("utf-8")
         self.assertIn("Welcome", html)
         self.assertIn("Desk ready", html)
-        self.assertIn("toggle HUD", html)
+        self.assertIn("H · HUD", html)
         self.assertNotIn("Hershey", html)
 
 

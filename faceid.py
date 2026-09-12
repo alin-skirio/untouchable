@@ -320,26 +320,26 @@ def draw_enroll_coach(
     import chrome
 
     h, w = frame.shape[:2]
-    panel_h = 108
-    y1 = h - panel_h - 10
+    panel_h = 92
+    y1 = h - panel_h - 8
     edge = (94, 234, 212, 90) if in_pose else (255, 255, 255, 28)
-    chrome.glass_panel(frame, 10, y1, w - 10, h - 10, radius=16, fill=(10, 11, 15, 210), outline=edge)
+    chrome.glass_panel(frame, 8, y1, w - 8, h - 8, radius=14, fill=(10, 11, 15, 210), outline=edge)
     step_label = f"{step_index + 1}/{len(ENROLL_STEPS)}  {name}".upper()
-    chrome.text(frame, step_label, 22, y1 + 18, size=11, color=chrome.DIM, alpha=180, anchor="lt")
-    chrome.text(frame, step["title"], 22, y1 + 42, size=18, color=chrome.TEXT, weight="medium", anchor="lt")
+    chrome.text(frame, step_label, 18, y1 + 16, size=11, color=chrome.DIM, alpha=180, anchor="lt")
+    chrome.text(frame, step["title"], 18, y1 + 34, size=16, color=chrome.TEXT, weight="medium", anchor="lt")
     chrome.text(
         frame,
         message or step["hint"],
-        22,
-        y1 + 68,
-        size=13,
+        18,
+        y1 + 56,
+        size=12,
         color=chrome.TEAL if in_pose else chrome.DIM,
         alpha=220 if in_pose else 170,
         anchor="lt",
     )
 
-    bar_x1, bar_x2 = 22, w - 22
-    bar_y1, bar_y2 = y1 + 86, y1 + 90
+    bar_x1, bar_x2 = 18, w - 18
+    bar_y1, bar_y2 = y1 + 74, y1 + 78
     cv2.rectangle(frame, (bar_x1, bar_y1), (bar_x2, bar_y2), (48, 48, 48), -1)
     fill = int(bar_x1 + (bar_x2 - bar_x1) * max(0.0, min(1.0, step_progress)))
     if fill > bar_x1:
@@ -348,7 +348,7 @@ def draw_enroll_coach(
     total = len(ENROLL_STEPS)
     for i in range(total):
         cx = 22 + i * 14
-        cy = y1 + 10
+        cy = y1 + 8
         done = i < step_index or (i == step_index and step_progress >= 1.0)
         current = i == step_index
         color = (94, 234, 212) if done or current else (80, 80, 80)
@@ -1383,7 +1383,7 @@ class NameEntryUI:
             self._last_blink = now
 
         h, w = frame.shape[:2]
-        box_w, box_h = min(420, w - 32), 108
+        box_w, box_h = min(360, w - 28), 92
         x1 = (w - box_w) // 2
         y1 = (h - box_h) // 2
         x2, y2 = x1 + box_w, y1 + box_h
@@ -1392,20 +1392,20 @@ class NameEntryUI:
 
         chrome.dim_frame(frame, 0.4)
         chrome.glass_panel(frame, x1, y1, x2, y2, radius=16, fill=(10, 11, 15, 230))
-        chrome.text(frame, "Your name", x1 + 16, y1 + 20, size=12, color=chrome.TEAL, alpha=220, anchor="lt")
+        chrome.text(frame, "Your name", x1 + 14, y1 + 16, size=12, color=chrome.TEAL, alpha=220, anchor="lt")
         chrome.text(
             frame,
             "Type a name, then press Enter",
-            x1 + 16,
-            y1 + 40,
+            x1 + 14,
+            y1 + 34,
             size=12,
             color=chrome.DIM,
             alpha=180,
             anchor="lt",
         )
 
-        field_y1, field_y2 = y1 + 60, y1 + 90
-        chrome.glass_panel(frame, x1 + 16, field_y1, x2 - 16, field_y2, radius=10, fill=(16, 18, 22, 220))
+        field_y1, field_y2 = y1 + 52, y1 + 78
+        chrome.glass_panel(frame, x1 + 14, field_y1, x2 - 14, field_y2, radius=10, fill=(16, 18, 22, 220))
 
         caret = "|" if self._blink_on else " "
         if self.text:
@@ -1416,4 +1416,4 @@ class NameEntryUI:
             display = "name" + caret
             color = chrome.MUTE
             alpha = 180
-        chrome.text(frame, display, x1 + 26, field_y1 + 15, size=15, color=color, alpha=alpha, anchor="lt")
+        chrome.text(frame, display, x1 + 24, field_y1 + 13, size=14, color=color, alpha=alpha, anchor="lt")

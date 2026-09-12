@@ -24,17 +24,17 @@ FEATURES = (
 )
 
 GESTURES = (
-    (TEAL, "Pointer", "Open → fist → gun"),
-    (VIOLET, "Clicker", "Fold thumb + middle"),
-    (TEAL, "App switcher", "Thumb+middle pinch, index flap"),
-    (GREEN, "Scroll", "Index or pinky"),
-    (VIOLET, "Flick scroll", "Open from a fist"),
-    (TEAL, "TikTok", "Two-handed T"),
-    (VIOLET, "Voice", 'After “hey Grok”'),
+    (TEAL, "Pointer", "open → fist → gun"),
+    (VIOLET, "Clicker", "thumb + middle"),
+    (TEAL, "Switcher", "pinch + flap"),
+    (GREEN, "Scroll", "index or pinky"),
+    (VIOLET, "Flick", "open from a fist"),
+    (TEAL, "TikTok", "two-handed T"),
+    (VIOLET, "Voice", "hey Grok"),
 )
 
-RAIL_W = 268
-RAIL_H = 148
+RAIL_W = 248
+RAIL_H = 128
 
 
 class CameraHud:
@@ -123,13 +123,12 @@ class CameraHud:
         glow = TEAL if pointer_engaged and not locked else MUTE
         if locked:
             glow = AMBER
-        chrome.hairline_brackets(frame, inset=16, length=20, color=glow)
-        _live_mark(frame)
+        chrome.hairline_brackets(frame, inset=14, length=16, color=glow)
         _hud_toggle(frame, self.chrome, self._cam_hits)
         if locked:
             _lock_banner(frame, who)
         elif self.chrome:
-            _wordmark(frame)
+            _brand_chip(frame)
             _unlock_pill(frame, who)
             if hint and not self.faces_open:
                 _hint_bar(frame, hint)
@@ -143,24 +142,24 @@ class CameraHud:
         img = _blank_rail()
         state, mode, _meta, _hint = _status_view(status_lines or [])
         locked = state == "Locked"
-        chrome.glass_panel(img, 8, 8, RAIL_W - 8, RAIL_H - 8, radius=16)
-        chrome.text(img, "Camera hidden", 22, 28, size=15, color=TEXT, anchor="lt")
+        chrome.glass_panel(img, 6, 6, RAIL_W - 6, RAIL_H - 6, radius=16)
+        chrome.text(img, "Camera hidden", 18, 22, size=14, color=TEXT, anchor="lt")
         who = state if state not in ("Live",) else "Waiting for a face"
         detail = f"{who}  ·  {mode}"
-        chrome.text(img, detail[:42], 22, 52, size=12, color=DIM, alpha=140, anchor="lt")
+        chrome.text(img, detail[:42], 18, 44, size=12, color=DIM, alpha=140, anchor="lt")
         chrome.text(
             img,
-            "Gestures still run while this is tucked away.",
-            22,
-            74,
+            "Gestures still run while tucked away.",
+            18,
+            62,
             size=11,
             color=MUTE,
             alpha=160,
             anchor="lt",
         )
-        _pill_btn(img, 16, 100, 148, "Show camera", self._rail_hits, "toggle_preview", primary=True)
-        _pill_btn(img, 172, 100, 80, "Quit", self._rail_hits, "quit", danger=True)
-        cv2.circle(img, (RAIL_W - 22, 24), 4, ROSE if locked else GREEN, -1, cv2.LINE_AA)
+        _pill_btn(img, 14, 86, 140, "Show camera", self._rail_hits, "toggle_preview", primary=True)
+        _pill_btn(img, 160, 86, 72, "Quit", self._rail_hits, "quit", danger=True)
+        cv2.circle(img, (RAIL_W - 20, 22), 4, ROSE if locked else GREEN, -1, cv2.LINE_AA)
         cv2.imshow(RAIL_WINDOW, img)
 
 
@@ -258,155 +257,157 @@ def overlay_copy(lines: list[str]) -> tuple[str, str, bool]:
 status_view = _status_view
 
 
-def _wordmark(frame) -> None:
-    tw, _ = chrome.measure("HAND", 13, "medium")
-    chrome.text(frame, "HAND", 28, 28, size=13, color=TEAL, alpha=220, weight="medium", anchor="lt")
-    chrome.text(
-        frame,
-        "CONTROL",
-        28 + tw + 7,
-        28,
-        size=13,
-        color=TEXT,
-        alpha=210,
-        weight="medium",
-        anchor="lt",
-    )
+def _brand_chip(frame) -> None:
+    label = "Hand Control"
+    tw, _ = chrome.measure(label, 12, "medium")
+    width = tw + 28
+    chrome.glass_panel(frame, 12, 12, 12 + width, 38, radius=13)
+    cv2.circle(frame, (24, 25), 3, TEAL, -1, cv2.LINE_AA)
+    chrome.text(frame, label, 34, 25, size=12, color=TEXT, alpha=220, weight="medium", anchor="lm")
 
 
 def _unlock_pill(frame, who: str) -> None:
     label = f"Unlocked · {who}" if who else "Unlocked"
-    tw, _ = chrome.measure(label, 13)
-    width = tw + 36
-    x2 = frame.shape[1] - 22
+    tw, _ = chrome.measure(label, 12)
+    width = tw + 32
+    x2 = frame.shape[1] - 12
     x1 = x2 - width
-    chrome.pill(frame, x1, 18, label, dot=GREEN, height=28, size=12)
-
-
-def _live_mark(frame) -> None:
-    chrome.text(frame, "LIVE", 36, 48, size=10, color=MUTE, alpha=170, weight="medium", anchor="lt")
+    chrome.pill(frame, x1, 12, label, dot=GREEN, height=26, size=11, pad_x=12)
 
 
 def _lock_banner(frame, who: str) -> None:
     h, w = frame.shape[:2]
     label = "Commands off · unfamiliar face"
-    tw, _ = chrome.measure(label, 14)
-    width = tw + 40
+    tw, _ = chrome.measure(label, 13)
+    width = tw + 36
     x1 = (w - width) // 2
-    y1 = 20
+    y1 = 12
     chrome.glass_panel(
         frame,
         x1,
         y1,
         x1 + width,
-        y1 + 34,
-        radius=17,
+        y1 + 28,
+        radius=14,
         fill=(18, 12, 14, 190),
         outline=(251, 191, 36, 70),
     )
-    cv2.circle(frame, (x1 + 16, y1 + 17), 3, AMBER, -1, cv2.LINE_AA)
-    chrome.text(frame, label, x1 + 28, y1 + 17, size=13, color=AMBER, alpha=230, anchor="lm")
+    cv2.circle(frame, (x1 + 14, y1 + 14), 3, AMBER, -1, cv2.LINE_AA)
+    chrome.text(frame, label, x1 + 24, y1 + 14, size=12, color=AMBER, alpha=230, anchor="lm")
     if who:
-        chrome.text(frame, who, w // 2, y1 + 52, size=12, color=ROSE, alpha=180, anchor="mt")
+        chrome.text(frame, who, w // 2, y1 + 40, size=11, color=ROSE, alpha=180, anchor="mt")
 
 
 def _hint_bar(frame, hint: str) -> None:
     text = hint[:56]
-    tw, _ = chrome.measure(text, 12)
-    bar_w = min(frame.shape[1] - 40, tw + 28)
-    x1, y1 = 22, frame.shape[0] - 86
-    chrome.glass_panel(frame, x1, y1, x1 + bar_w, y1 + 28, radius=14)
-    chrome.text(frame, text, x1 + 14, y1 + 14, size=12, color=DIM, alpha=180, anchor="lm")
+    tw, _ = chrome.measure(text, 11)
+    bar_w = min(frame.shape[1] - 32, tw + 24)
+    x1, y1 = 14, frame.shape[0] - 72
+    chrome.glass_panel(frame, x1, y1, x1 + bar_w, y1 + 24, radius=12)
+    chrome.text(frame, text, x1 + 12, y1 + 12, size=11, color=DIM, alpha=180, anchor="lm")
 
 
 def _gesture_legend(frame) -> None:
     h, w = frame.shape[:2]
-    x = w - 220
-    y = 78
-    chrome.text(frame, "GESTURES", x, y, size=10, color=MUTE, alpha=160, weight="medium", anchor="lt")
-    y += 16
+    row_h = 18
+    pad_x, pad_y = 12, 10
+    box_w = 212
+    box_h = pad_y * 2 + 12 + len(GESTURES) * row_h
+    x = w - box_w - 12
+    y = 48
+    if y + box_h > h - 56:
+        box_h = max(40, h - 56 - y)
+    chrome.glass_panel(frame, x, y, x + box_w, y + box_h, radius=14)
+    chrome.text(frame, "GESTURES", x + pad_x, y + pad_y, size=9, color=MUTE, alpha=160, weight="medium", anchor="lt")
+    row_y = y + pad_y + 14
     for color, title, detail in GESTURES:
-        cv2.circle(frame, (x + 4, y + 8), 3, color, -1, cv2.LINE_AA)
-        chrome.text(frame, title, x + 16, y + 8, size=12, color=TEXT, alpha=220, anchor="lm")
-        chrome.text(frame, detail, x + 16, y + 22, size=10, color=DIM, alpha=155, anchor="lm")
-        y += 36
-        if y > h - 120:
+        if row_y + 12 > y + box_h - 6:
             break
+        cv2.circle(frame, (x + pad_x + 3, row_y + 6), 2, color, -1, cv2.LINE_AA)
+        chrome.text(
+            frame,
+            f"{title} · {detail}",
+            x + pad_x + 12,
+            row_y + 6,
+            size=11,
+            color=TEXT,
+            alpha=210,
+            anchor="lm",
+        )
+        row_y += row_h
 
 
 def _dock(frame, hits: list) -> None:
     items = (
         ("Camera", "C", "toggle_preview"),
         ("Faces", "A / L", "toggle_faces"),
-        ("Snap cursor", "S", "snap_cursor"),
+        ("Snap", "S", "snap_cursor"),
         ("Quit", "Q", "quit"),
     )
     h, w = frame.shape[:2]
-    gap = 8
-    pill_w = 118
+    gap = 4
+    pill_w = 78
     total = len(items) * pill_w + (len(items) - 1) * gap
-    x = max(20, (w - total) // 2)
-    y = h - 52
-    chrome.glass_panel(frame, x - 10, y - 8, x + total + 10, y + 40, radius=20)
+    x = max(14, (w - total) // 2)
+    y = h - 42
+    chrome.glass_panel(frame, x - 8, y - 6, x + total + 8, y + 32, radius=16)
     for title, shortcut, action in items:
-        _dock_item(frame, x, y, pill_w - 4, title, shortcut, hits, action)
+        _dock_item(frame, x, y, pill_w - 2, title, shortcut, hits, action)
         x += pill_w + gap
 
 
 def _dock_item(frame, x, y, width, title, shortcut, hits, action) -> None:
-    x2, y2 = x + width, y + 32
-    chrome.text(frame, title, x + width // 2, y + 10, size=12, color=TEXT, alpha=220, anchor="mm")
-    chrome.text(frame, shortcut, x + width // 2, y + 24, size=10, color=DIM, alpha=160, anchor="mm")
+    x2, y2 = x + width, y + 26
+    chrome.text(frame, title, x + width // 2, y + 8, size=11, color=TEXT, alpha=220, anchor="mm")
+    chrome.text(frame, shortcut, x + width // 2, y + 20, size=9, color=DIM, alpha=160, anchor="mm")
     hits.append(((x, y, x2, y2), action))
 
 
 def _hud_toggle(frame, on: bool, hits: list) -> None:
     h, w = frame.shape[:2]
-    label = "H · toggle HUD"
+    label = "H · HUD  ON" if on else "H · HUD"
     tw, _ = chrome.measure(label, 11)
-    x1 = w - tw - 78
-    y1 = h - 34
-    chrome.text(frame, label, x1, y1 + 12, size=11, color=MUTE, alpha=160, anchor="lm")
-    btn = "ON" if on else "HUD"
-    bx = w - 56
+    width = tw + 28
+    x1 = w - width - 12
+    y1 = h - 36
     chrome.pill(
         frame,
-        bx,
+        x1,
         y1,
-        btn,
+        label,
         dot=TEAL if on else MUTE,
         height=24,
         pad_x=10,
         size=10,
         fill=(14, 16, 20, 180),
     )
-    hits.append(((bx, y1, w - 16, y1 + 24), "toggle_chrome"))
+    hits.append(((x1, y1, x1 + width, y1 + 24), "toggle_chrome"))
 
 
 def _draw_faces_panel(frame, hud: CameraHud) -> None:
     h, w = frame.shape[:2]
     chrome.dim_frame(frame, 0.4)
-    box_w = min(440, w - 40)
-    row_h = 34
+    box_w = min(400, w - 32)
+    row_h = 30
     names = hud.faces
     list_h = max(row_h, min(8, max(1, len(names))) * row_h)
-    box_h = 108 + list_h + 58
+    box_h = 88 + list_h + 50
     x1 = (w - box_w) // 2
-    y1 = max(86, (h - box_h) // 2)
+    y1 = max(56, (h - box_h) // 2)
     x2, y2 = x1 + box_w, y1 + box_h
-    chrome.glass_panel(frame, x1, y1, x2, y2, radius=18, fill=(10, 11, 15, 220))
-    chrome.text(frame, "People", x1 + 22, y1 + 28, size=18, color=TEXT, weight="medium", anchor="lt")
+    chrome.glass_panel(frame, x1, y1, x2, y2, radius=16, fill=(10, 11, 15, 220))
+    chrome.text(frame, "People", x1 + 18, y1 + 20, size=16, color=TEXT, weight="medium", anchor="lt")
     chrome.text(
         frame,
-        "Choose a saved face to delete, or add someone new.",
-        x1 + 22,
-        y1 + 52,
+        "Pick a face to delete, or add someone new.",
+        x1 + 18,
+        y1 + 42,
         size=12,
         color=DIM,
         alpha=180,
         anchor="lt",
     )
-    list_y = y1 + 70
+    list_y = y1 + 58
     if not names:
         chrome.text(
             frame,
@@ -425,9 +426,9 @@ def _draw_faces_panel(frame, hud: CameraHud) -> None:
             selected = i == hud.faces_sel
             chrome.glass_panel(
                 frame,
-                x1 + 18,
+                x1 + 16,
                 ry1,
-                x2 - 18,
+                x2 - 16,
                 ry2,
                 radius=10,
                 fill=(20, 22, 26, 200) if selected else (16, 16, 18, 140),
@@ -436,31 +437,31 @@ def _draw_faces_panel(frame, hud: CameraHud) -> None:
             chrome.text(
                 frame,
                 name,
-                x1 + 32,
-                ry1 + 14,
+                x1 + 28,
+                ry1 + 12,
                 size=13,
                 color=TEXT if selected else DIM,
                 anchor="lt",
             )
-            hud._cam_hits.append(((x1 + 18, ry1, x2 - 18, ry2), f"pick_face:{i}"))
+            hud._cam_hits.append(((x1 + 16, ry1, x2 - 16, ry2), f"pick_face:{i}"))
 
-    btn_y = y2 - 46
-    _pill_btn(frame, x1 + 18, btn_y, 108, "Add person", hud._cam_hits, "add_face", primary=True)
+    btn_y = y2 - 40
+    _pill_btn(frame, x1 + 16, btn_y, 100, "Add person", hud._cam_hits, "add_face", primary=True)
     if hud.confirm_name:
         _pill_btn(
             frame,
-            x1 + 134,
+            x1 + 122,
             btn_y,
-            168,
+            160,
             f"Delete {hud.confirm_name}?",
             hud._cam_hits,
             "confirm_delete",
             danger=True,
         )
-        _pill_btn(frame, x1 + 310, btn_y, 92, "Keep", hud._cam_hits, "cancel_delete")
+        _pill_btn(frame, x1 + 288, btn_y, 80, "Keep", hud._cam_hits, "cancel_delete")
     else:
-        _pill_btn(frame, x1 + 134, btn_y, 92, "Delete", hud._cam_hits, "ask_delete", danger=True)
-        _pill_btn(frame, x1 + 234, btn_y, 92, "Done", hud._cam_hits, "close_faces")
+        _pill_btn(frame, x1 + 122, btn_y, 80, "Delete", hud._cam_hits, "ask_delete", danger=True)
+        _pill_btn(frame, x1 + 208, btn_y, 80, "Done", hud._cam_hits, "close_faces")
 
 
 def _pill_btn(

@@ -195,19 +195,35 @@ def glass_panel(
     fill: tuple[int, int, int, int] = (10, 11, 15, 150),
     outline: tuple[int, int, int, int] = (255, 255, 255, 28),
 ) -> None:
-    if not HAS_PIL:
-        cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), MUTE, 1, cv2.LINE_AA)
-        return
     h, w = frame.shape[:2]
     x1, y1 = max(0, int(x1)), max(0, int(y1))
     x2, y2 = min(w, int(x2)), min(h, int(y2))
     if x2 <= x1 or y2 <= y1:
         return
     crop = frame[y1:y2, x1:x2]
-    layer = Image.new("RGBA", (x2 - x1, y2 - y1), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(layer)
-    rounded_rect(draw, (0, 0, x2 - x1 - 1, y2 - y1 - 1), radius, fill=fill, outline=outline, width=1)
-    _blit(crop, layer)
+    ch, cw = crop.shape[:2]
+    k = min(ch, cw)
+    if k >= 5:
+        odd = k if k % 2 else k - 1
+        odd = min(21, max(5, odd))
+        frosted = cv2.GaussianBlur(crop, (odd, odd), 0)
+    else:
+        frosted = crop
+    if not HAS_PIL:
+        alpha = fill[3] / 255.0
+        tint = np.array([fill[2], fill[1], fill[0]], dtype=np.float32)
+        crop[:] = (frosted.astype(np.float32) * (1.0 - alpha) + tint * alpha).astype(np.uint8)
+        cv2.rectangle(crop, (0, 0), (cw - 1, ch - 1), MUTE, 1, cv2.LINE_AA)
+        return
+    base = Image.fromarray(cv2.cvtColor(frosted, cv2.COLOR_BGR2RGB)).convert("RGBA")
+    overlay = Image.new("RGBA", (cw, ch), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+    rounded_rect(draw, (0, 0, cw - 1, ch - 1), radius, fill=fill, outline=outline, width=1)
+    composed = Image.alpha_composite(base, overlay)
+    mask = Image.new("L", (cw, ch), 0)
+    ImageDraw.Draw(mask).rounded_rectangle((0, 0, cw - 1, ch - 1), radius=max(0, radius), fill=255)
+    original = Image.fromarray(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)).convert("RGBA")
+    _blit(crop, Image.composite(composed, original, mask))
 
 
 def text(
