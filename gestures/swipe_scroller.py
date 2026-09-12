@@ -14,6 +14,10 @@ class SwipeScroller:
         self.scroll_amount = scroll_amount
         self.cooldown = 0
 
+    def reset(self) -> None:
+        self.history.clear()
+        self.cooldown = 0
+
     def update(self, hand_landmarks, fingers_down: list[str]) -> int:
         if self.cooldown > 0:
             self.cooldown -= 1

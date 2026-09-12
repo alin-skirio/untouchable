@@ -8,6 +8,16 @@ Pinch right thumb+index+middle to start app switching (holds ⌘).
 Flap your index finger up and down while holding thumb+middle to send Tab.
 Release thumb+middle to select the active application.
 
+Pop a right fist open (index through pinky) to flick-scroll down.
+
+Hold the pinky up for 3 seconds (fingers touching) to start ScrollUp,
+make a fist, then raise: the page follows and stops when all fingers
+point up at max palm-reach. Fist again to repeat. If the fingers
+separate, it cancels. Point the pinky up to ScrollDown.
+
+Point index+middle with ring+pinky curled to move the macOS cursor.
+Curl index+middle to left-drag; add a pointed thumb to right-drag.
+⌘T captures a reference image so cursor travel stays consistent with distance.
 Hold right thumb+ring+pinky down, keep index+middle up and together,
 and swipe up rapidly to scroll down dynamically based on swipe severity.
 
@@ -31,8 +41,22 @@ import mediapipe as mp
 
 from faceid import FaceID, NameEntryUI, open_camera
 from gestures.app_switcher import AppSwitcher
+from gestures.cursor import PointerCursor
+from gestures.landmarks import palm_size_px
+from gestures.scroll_down import ScrollDown
+from gestures.scroll_up import ScrollUp
 from gestures.swipe_scroller import SwipeScroller
-from mac_keys import async_cmd, async_tap_tab, set_cmd_state, smooth_scroll
+from mac_keys import (
+    async_cmd,
+    async_tap_tab,
+    move_mouse,
+    mouse_down,
+    mouse_up,
+    release_mouse,
+    set_cmd_state,
+    smooth_scroll,
+    start_cmd_t_monitor,
+)
 
 TRAIL_LENGTH = 24
 MAX_HANDS = 2
@@ -89,7 +113,7 @@ def fingers_down(hand_landmarks) -> list[str]:
 
 def draw_hud(frame, lines: list[str]) -> None:
     height = 58 + 26 * max(len(lines), 1)
-    cv2.rectangle(frame, (16, 16), (780, 16 + height), (18, 18, 18), -1)
+    cv2.rectangle(frame, (16, 16), (860, 16 + height), (18, 18, 18), -1)
     y = 46
     for line in lines:
         cv2.putText(
@@ -190,11 +214,19 @@ def main() -> None:
     pending: dict[str, tuple[str, int]] = {}
 
     switcher = AppSwitcher()
+    scroll_up = ScrollUp()
+    scroll_down = ScrollDown()
     scroller = SwipeScroller()
+    pointer = PointerCursor()
+    cmd_t = start_cmd_t_monitor()
 
     last_cmd_tab_at = 0.0
     last_scroll_at = 0.0
     last_scroll_amount = 0
+    last_scroll_action = ""
+    last_ref_at = 0.0
+    last_ref_msg = ""
+    last_right_palm = 0.0
     failed_frame_count = 0
     window = "Hand Control — tracker"
 
@@ -205,12 +237,15 @@ def main() -> None:
     )
     if preview:
         cv2.namedWindow(window, cv2.WINDOW_NORMAL)
+        print("Tracking in the background too. Close this window or click away; Ctrl+C or Q to quit.")
+        print("⌘T captures a hand-distance reference. Index+middle up, ring+pinky down moves the cursor.")
         print(
             "Same camera for hands + face. "
             "A = add face profile (type name in the window), L = list, Q/Esc or Ctrl+C to quit."
         )
     else:
         print("Running without a preview. Hold thumb+middle & tap index to cycle apps. Ctrl+C to quit.")
+        print("⌘T captures a hand-distance reference. Index+middle up, ring+pinky down moves the cursor.")
 
     try:
         while running:
@@ -242,11 +277,9 @@ def main() -> None:
             if result.multi_hand_landmarks:
                 handedness_list = result.multi_handedness or []
                 for i, hand_landmarks in enumerate(result.multi_hand_landmarks):
-                    wrist = hand_landmarks.landmark[0]
-                    middle_mcp = hand_landmarks.landmark[9]
-                    palm_size_px = math.hypot((wrist.x - middle_mcp.x) * width, (wrist.y - middle_mcp.y) * height)
+                    palm_px = palm_size_px(hand_landmarks, width, height)
 
-                    if palm_size_px < MIN_PALM_SIZE_PX:
+                    if palm_px < MIN_PALM_SIZE_PX:
                         continue
 
                     label = "Hand"
@@ -295,34 +328,99 @@ def main() -> None:
 
                     if label == "Right":
                         saw_right = True
-                        
-                        # --- App Switcher Logic ---
-                        started, tapped, ended = switcher.update(hand_landmarks)
+                        last_right_palm = palm_px
 
-                        if started:
-                            async_cmd(True)
-                            async_tap_tab()
-                            last_cmd_tab_at = time.monotonic()
-                        elif tapped:
-                            async_tap_tab()
-                            last_cmd_tab_at = time.monotonic()
-                        elif ended:
-                            async_cmd(False)
+                        was_pointing = pointer.engaged
+                        cursor = pointer.update(hand_landmarks, down, (width, height))
+                        if cursor.button_down:
+                            mouse_down(cursor.button_down)
+                        drag = pointer.held_button or cursor.button_up
+                        if cursor.dx or cursor.dy:
+                            move_mouse(cursor.dx, cursor.dy, dragging=drag)
+                        if cursor.button_up:
+                            mouse_up(cursor.button_up)
 
-                        if switcher.active:
-                            status_lines.append("Right pinch: App Switcher Active (⌘ Held)")
-                            
-                        # --- Swipe Scroller Logic ---
-                        scroll_amount = scroller.update(hand_landmarks, down)
-                        if scroll_amount > 0:
-                            # Depending on macOS Natural Scrolling, you might need to remove the '-' sign below
-                            threading.Thread(target=smooth_scroll, args=(-scroll_amount,), daemon=True).start()
-                            last_scroll_at = time.monotonic()
-                            last_scroll_amount = scroll_amount
+                        if cursor.engaged:
+                            scroll_up.reset()
+                            scroll_down.reset()
+                            scroller.reset()
+                            if pointer.held_button == "right":
+                                status_lines.append("Right drag")
+                            elif pointer.held_button == "left":
+                                status_lines.append("Left drag")
+                            else:
+                                status_lines.append("Pointer")
+                        elif was_pointing:
+                            scroll_up.reset()
+                            scroll_down.reset()
+                            scroller.reset()
+                        else:
+                            started, tapped, ended = switcher.update(hand_landmarks)
 
-            if not saw_right and switcher.active:
-                switcher.reset()
-                async_cmd(False)
+                            if started:
+                                async_cmd(True)
+                                async_tap_tab()
+                                last_cmd_tab_at = time.monotonic()
+                            elif tapped:
+                                async_tap_tab()
+                                last_cmd_tab_at = time.monotonic()
+                            elif ended:
+                                async_cmd(False)
+
+                            if switcher.active:
+                                status_lines.append("Right pinch: App Switcher Active (⌘ Held)")
+
+                            up_lines = scroll_up.update(hand_landmarks, down)
+                            down_lines = 0 if up_lines > 0 else scroll_down.update(hand_landmarks, down)
+                            if up_lines > 0:
+                                threading.Thread(
+                                    target=smooth_scroll, args=(up_lines,), daemon=True
+                                ).start()
+                                last_scroll_at = time.monotonic()
+                                last_scroll_amount = up_lines
+                                last_scroll_action = "up"
+                            elif down_lines > 0:
+                                threading.Thread(
+                                    target=smooth_scroll, args=(-down_lines,), daemon=True
+                                ).start()
+                                last_scroll_at = time.monotonic()
+                                last_scroll_amount = down_lines
+                                last_scroll_action = "down"
+                            elif scroll_up.phase == "raising":
+                                scroller.reset()
+                                status_lines.append(
+                                    "ScrollUp: raise touching fingers — page follows"
+                                )
+                            elif scroll_up.phase == "wait_fist":
+                                scroller.reset()
+                                status_lines.append("ScrollUp: make a fist")
+                            elif scroll_up.hold_seconds > 0:
+                                scroller.reset()
+                                status_lines.append(
+                                    f"ScrollUp: hold pinky up {scroll_up.hold_seconds:.1f}/{scroll_up.initiate_seconds:.0f}s"
+                                )
+                            else:
+                                scroll_amount = scroller.update(hand_landmarks, down)
+                                if scroll_amount > 0:
+                                    threading.Thread(
+                                        target=smooth_scroll, args=(-scroll_amount,), daemon=True
+                                    ).start()
+                                    last_scroll_at = time.monotonic()
+                                    last_scroll_amount = scroll_amount
+                                    last_scroll_action = "flick"
+
+            if not saw_right:
+                if pointer.engaged or pointer.held_button:
+                    released = pointer.reset()
+                    if released:
+                        mouse_up(released)
+                    release_mouse()
+                if switcher.active:
+                    switcher.reset()
+                    async_cmd(False)
+                scroll_up.reset()
+                scroll_down.reset()
+                scroller.reset()
 
             for label, trail in trails.items():
                 if label not in seen:
@@ -330,14 +428,42 @@ def main() -> None:
                     active_finger.pop(label, None)
                     pending.pop(label, None)
 
+            if cmd_t.consume():
+                if switcher.active:
+                    pass
+                elif saw_right and last_right_palm >= MIN_PALM_SIZE_PX:
+                    saved = pointer.set_reference(last_right_palm, frame, (width, height))
+                    last_ref_msg = "Reference captured" if saved else "Could not save reference"
+                    last_ref_at = time.monotonic()
+                    print(last_ref_msg)
+                else:
+                    last_ref_msg = "No hand for reference"
+                    last_ref_at = time.monotonic()
+                    print(last_ref_msg)
+
             if time.monotonic() - last_cmd_tab_at < 0.8:
                 status_lines.append("Sent Tab")
             if time.monotonic() - last_scroll_at < 1.0:
+                if last_scroll_action == "up":
+                    status_lines.append(f"Scroll up ({abs(last_scroll_amount)} lines)")
+                elif last_scroll_action == "flick":
+                    status_lines.append(f"Flick scroll ({abs(last_scroll_amount)} lines)")
+                else:
+                    status_lines.append(f"Scroll down ({abs(last_scroll_amount)} lines)")
+            if not seen:
+                status_lines.append("No hands in view")
+            if pointer.has_reference:
+                status_lines.append("⌘T reference set")
+            else:
+                status_lines.append("⌘T to set reference")
+            if last_ref_msg and time.monotonic() - last_ref_at < 1.5:
+                status_lines.append(last_ref_msg)
                 status_lines.append(f"Scrolled {last_scroll_amount} lines!")
 
             if not seen and not face_id.enrolling:
                 status_lines.append("No hands in view")
             status_lines.append("Hold Right thumb+middle & tap index = ⌘Tab cycle")
+            status_lines.append("Index+middle up, ring+pinky down = pointer")
 
             if preview:
                 draw_hud(frame, status_lines)
@@ -374,7 +500,9 @@ def main() -> None:
                         else:
                             print("No face profiles yet. Press A to add one.")
     finally:
+        release_mouse()
         set_cmd_state(False)
+        cmd_t.stop()
         hands.close()
         face_id.close()
         cap.release()

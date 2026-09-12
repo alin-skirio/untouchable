@@ -6,6 +6,9 @@ __pycache__/
 *.task
 .idea/
 .vscode/
+hand_reference.png
+hand_reference.json
+
 profiles.db
 profiles/
 models/*.onnx
