@@ -8,8 +8,9 @@ Pinch right thumb+index+middle to start app switching (holds ⌘).
 Flap your index finger up and down while holding thumb+middle to send Tab.
 Release thumb+middle to select the active application.
 
-Hold right thumb+ring+pinky down, keep index+middle up and together, 
-and swipe up rapidly to scroll down dynamically based on swipe severity.
+Make a tight right fist (all five fingers down, index–middle–ring–pinky
+tips together) and hold it for 10 seconds to enter Scrolling. Then pop
+those four fingers open: lift them to ScrollUp, or drop them to ScrollDown.
 
 Close the preview or use --no-preview; Ctrl+C to quit.
 """
@@ -27,7 +28,7 @@ import cv2
 import mediapipe as mp
 
 from gestures.app_switcher import AppSwitcher
-from gestures.swipe_scroller import SwipeScroller
+from gestures.scrolling import Scrolling
 from mac_keys import async_cmd, async_tap_tab, set_cmd_state, smooth_scroll
 
 TRAIL_LENGTH = 24
@@ -207,11 +208,12 @@ def main() -> None:
     pending: dict[str, tuple[str, int]] = {}
     
     switcher = AppSwitcher()
-    scroller = SwipeScroller()
+    scrolling = Scrolling()
     
     last_cmd_tab_at = 0.0
     last_scroll_at = 0.0
     last_scroll_amount = 0
+    last_scroll_action = ""
     failed_frame_count = 0
     window = "Hand Control — tracker"
 
@@ -317,18 +319,26 @@ def main() -> None:
 
                         if switcher.active:
                             status_lines.append("Right pinch: App Switcher Active (⌘ Held)")
-                            
-                        # --- Swipe Scroller Logic ---
-                        scroll_amount = scroller.update(hand_landmarks, down)
-                        if scroll_amount > 0:
-                            # Depending on macOS Natural Scrolling, you might need to remove the '-' sign below
-                            threading.Thread(target=smooth_scroll, args=(-scroll_amount,), daemon=True).start()
+
+                        # --- Scrolling: fist arms the mode, then ScrollUp or ScrollDown ---
+                        scroll_amount = scrolling.update(hand_landmarks, down)
+                        if scroll_amount != 0:
+                            threading.Thread(target=smooth_scroll, args=(scroll_amount,), daemon=True).start()
                             last_scroll_at = time.monotonic()
                             last_scroll_amount = scroll_amount
+                            last_scroll_action = scrolling.last_action or ("up" if scroll_amount > 0 else "down")
+                        elif scrolling.active:
+                            status_lines.append("Scrolling: open four fingers up or down")
+                        elif scrolling.hold_seconds > 0:
+                            status_lines.append(
+                                f"Scrolling: hold fist {scrolling.hold_seconds:.1f}/{scrolling.confirm_seconds:.0f}s"
+                            )
 
-            if not saw_right and switcher.active:
-                switcher.reset()
-                async_cmd(False)
+            if not saw_right:
+                if switcher.active:
+                    switcher.reset()
+                    async_cmd(False)
+                scrolling.reset()
 
             for label, trail in trails.items():
                 if label not in seen:
@@ -339,7 +349,8 @@ def main() -> None:
             if time.monotonic() - last_cmd_tab_at < 0.8:
                 status_lines.append("Sent Tab")
             if time.monotonic() - last_scroll_at < 1.0:
-                status_lines.append(f"Scrolled {last_scroll_amount} lines!")
+                direction = last_scroll_action or ("up" if last_scroll_amount > 0 else "down")
+                status_lines.append(f"Scroll {direction} ({abs(last_scroll_amount)} lines)")
             
             if not status_lines:
                 status_lines = ["No hands in view"]

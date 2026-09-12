@@ -2,6 +2,6 @@
 
 from .app_switcher import AppSwitcher
 from .landmarks import triple_pinch_span
-from .swipe_scroller import SwipeScroller
+from .scrolling import ScrollDown, ScrollUp, Scrolling
 
-__all__ = ["AppSwitcher", "SwipeScroller", "triple_pinch_span"]
+__all__ = ["AppSwitcher", "Scrolling", "ScrollUp", "ScrollDown", "triple_pinch_span"]
