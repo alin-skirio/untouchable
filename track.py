@@ -10,10 +10,8 @@ Release thumb+middle to select the active application.
 
 Pop a right fist open (index through pinky) to flick-scroll down.
 
-Hold the pinky up for 3 seconds (fingers touching) to start ScrollUp,
-make a fist, then raise: the page follows and stops when all fingers
-point up at max palm-reach. Fist again to repeat. If the fingers
-separate, it cancels. Point the pinky up to ScrollDown.
+Point the left pinky up to ScrollUp, or the right pinky up to
+ScrollDown. Both are a smooth continuous scroll at the same speed.
 
 Point index+middle with ring+pinky curled to move the macOS cursor.
 Curl index+middle to left-drag; add a pointed thumb to right-drag.
@@ -275,6 +273,7 @@ def main() -> None:
             seen: set[str] = set()
             status_lines: list[str] = []
             saw_right = False
+            saw_left = False
 
             if result.multi_hand_landmarks:
                 handedness_list = result.multi_handedness or []
@@ -328,6 +327,17 @@ def main() -> None:
                         f"{label}  {current}  x={tip.x:.2f}  y={tip.y:.2f}{extra}"
                     )
 
+                    if label == "Left":
+                        saw_left = True
+                        up_lines = scroll_up.update(hand_landmarks, down)
+                        if up_lines > 0:
+                            threading.Thread(
+                                target=smooth_scroll, args=(up_lines,), daemon=True
+                            ).start()
+                            last_scroll_at = time.monotonic()
+                            last_scroll_amount = up_lines
+                            last_scroll_action = "up"
+
                     if label == "Right":
                         saw_right = True
                         last_right_palm = palm_px
@@ -343,7 +353,6 @@ def main() -> None:
                             mouse_up(cursor.button_up)
 
                         if cursor.engaged:
-                            scroll_up.reset()
                             scroll_down.reset()
                             scroller.reset()
                             if pointer.held_button == "right":
@@ -353,7 +362,6 @@ def main() -> None:
                             else:
                                 status_lines.append("Pointer")
                         elif was_pointing:
-                            scroll_up.reset()
                             scroll_down.reset()
                             scroller.reset()
                         else:
@@ -372,35 +380,14 @@ def main() -> None:
                             if switcher.active:
                                 status_lines.append("Right pinch: App Switcher Active (⌘ Held)")
 
-                            up_lines = scroll_up.update(hand_landmarks, down)
-                            down_lines = 0 if up_lines > 0 else scroll_down.update(hand_landmarks, down)
-                            if up_lines > 0:
-                                threading.Thread(
-                                    target=smooth_scroll, args=(up_lines,), daemon=True
-                                ).start()
-                                last_scroll_at = time.monotonic()
-                                last_scroll_amount = up_lines
-                                last_scroll_action = "up"
-                            elif down_lines > 0:
+                            down_lines = scroll_down.update(hand_landmarks, down)
+                            if down_lines > 0:
                                 threading.Thread(
                                     target=smooth_scroll, args=(-down_lines,), daemon=True
                                 ).start()
                                 last_scroll_at = time.monotonic()
                                 last_scroll_amount = down_lines
                                 last_scroll_action = "down"
-                            elif scroll_up.phase == "raising":
-                                scroller.reset()
-                                status_lines.append(
-                                    "ScrollUp: raise touching fingers — page follows"
-                                )
-                            elif scroll_up.phase == "wait_fist":
-                                scroller.reset()
-                                status_lines.append("ScrollUp: make a fist")
-                            elif scroll_up.hold_seconds > 0:
-                                scroller.reset()
-                                status_lines.append(
-                                    f"ScrollUp: hold pinky up {scroll_up.hold_seconds:.1f}/{scroll_up.initiate_seconds:.0f}s"
-                                )
                             else:
                                 scroll_amount = scroller.update(hand_landmarks, down)
                                 if scroll_amount > 0:
@@ -411,6 +398,9 @@ def main() -> None:
                                     last_scroll_amount = scroll_amount
                                     last_scroll_action = "flick"
 
+            if not saw_left:
+                scroll_up.reset()
+
             if not saw_right:
                 if pointer.engaged or pointer.held_button:
                     released = pointer.reset()
@@ -420,7 +410,6 @@ def main() -> None:
                 if switcher.active:
                     switcher.reset()
                     async_cmd(False)
-                scroll_up.reset()
                 scroll_down.reset()
                 scroller.reset()
 

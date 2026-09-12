@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from .pose import pinky_pointing_up
+from .pose import LINES_PER_FRAME, pinky_pointing_up
 
 
 class ScrollDown:
-    def __init__(self, lines_per_frame: float = 4.0):
+    def __init__(self, lines_per_frame: float = LINES_PER_FRAME):
         self.lines_per_frame = lines_per_frame
         self.accrued = 0.0
 
