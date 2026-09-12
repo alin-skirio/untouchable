@@ -18,6 +18,8 @@ from .landmarks import (
 TOGETHER = 0.42
 LINE_DEV = 0.18
 LINES_PER_FRAME = 6.0
+FAST_LINES_PER_FRAME = 12.0
+THUMB_TUCKED = 1.05
 
 ALL_FINGERS = ("thumb", "index", "middle", "ring", "pinky")
 ALL_TIPS = (THUMB_TIP, INDEX_TIP, MIDDLE_TIP, RING_TIP, PINKY_TIP)
@@ -109,6 +111,25 @@ def pinky_only_up(lm, fingers_down: list[str]) -> bool:
     down = set(fingers_down)
     others_down = all(name in down for name in ("index", "middle", "ring"))
     return others_down and pinky_pointing_up(lm, fingers_down)
+
+
+def thumb_tucked(lm, fingers_down: list[str]) -> bool:
+    """True when the thumb is pressed in against the fist or palm."""
+    if "thumb" in fingers_down:
+        return True
+    palm = palm_size(lm)
+    cx, cy = palm_center(lm)
+    reach = math.hypot(lm[THUMB_TIP].x - cx, lm[THUMB_TIP].y - cy) / palm
+    return reach <= THUMB_TUCKED
+
+
+def pinky_scroll_rate(lm, fingers_down: list[str]) -> float:
+    """Lines per frame for pinky scroll, or 0 if the pose is not active."""
+    if not pinky_only_up(lm, fingers_down):
+        return 0.0
+    if thumb_tucked(lm, fingers_down):
+        return FAST_LINES_PER_FRAME
+    return LINES_PER_FRAME
 
 
 def pointing_up(lm) -> bool:
